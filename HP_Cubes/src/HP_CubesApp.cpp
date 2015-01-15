@@ -115,8 +115,7 @@ void HP_CubesApp::setup()
 	mGlsl = gl::GlslProg::create(loadAsset("shader_es2.vert"), loadAsset("shader_es2.frag"));
 #endif
 
-	//gl::VboMeshRef mesh = gl::VboMesh::create( geom::Teapot().subdivisions( 4 ) );
-	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Plane());
+	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Cube());
 
 	// create an array of initial per-instance positions laid out in a 2D grid
 	std::vector<vec3> positions;
