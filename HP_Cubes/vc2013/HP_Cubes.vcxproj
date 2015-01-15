@@ -1,4 +1,3 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -11,8 +10,8 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{B58A5F98-1948-49CF-AA4C-C3DAD51ADDDA}</ProjectGuid>
-    <RootNamespace>DepthDel</RootNamespace>
+    <ProjectGuid>{7AF87A98-164D-4A62-8CA7-0C6E6D42B26A}</ProjectGuid>
+    <RootNamespace>HP_Cubes</RootNamespace>
     <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -50,7 +49,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>..\include;..\..\..\..\libs\cinder_0.8.6_vc2013\include;..\..\..\..\libs\cinder_0.8.6_vc2013\boost;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\include;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\include\opencv2;$(DSROOT)\Include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\include;"..\..\..\..\libs\Cinder\include";"..\..\..\..\libs\Cinder\boost"</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;NOMINMAX;_WIN32_WINNT=0x0502;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MinimalRebuild>true</MinimalRebuild>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -61,11 +60,11 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>"..\..\..\..\libs\cinder_0.8.6_vc2013\include";..\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>"..\..\..\..\libs\Cinder\include";..\include</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>cinder-$(PlatformToolset)_d.lib;%(AdditionalDependencies);..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_calib3d249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_contrib249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_core249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_features2d249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_flann249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_gpu249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_imgproc249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_legacy249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ml249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_nonfree249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_objdetect249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ocl249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_photo249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_stitching249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_superres249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ts249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_video249d.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_videostab249d.lib</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\..\..\libs\cinder_0.8.6_vc2013\lib\msw\$(PlatformTarget);$(DSROOT)\Lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>cinder-$(PlatformToolset)_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>"..\..\..\..\libs\Cinder\lib\msw\$(PlatformTarget)"</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
@@ -76,7 +75,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\include;..\..\..\..\libs\cinder_0.8.6_vc2013\include;..\..\..\..\libs\cinder_0.8.6_vc2013\boost;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\include;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\include\opencv2;$(DSROOT)\Include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\include;"..\..\..\..\libs\Cinder\include";"..\..\..\..\libs\Cinder\boost"</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;NOMINMAX;_WIN32_WINNT=0x0502;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PrecompiledHeader />
@@ -88,11 +87,11 @@
       <LinkLibraryDependencies>true</LinkLibraryDependencies>
     </ProjectReference>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>"..\..\..\..\libs\cinder_0.8.6_vc2013\include";..\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>"..\..\..\..\libs\Cinder\include";..\include</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
-      <AdditionalDependencies>cinder-$(PlatformToolset).lib;%(AdditionalDependencies);..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_calib3d249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_contrib249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_core249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_features2d249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_flann249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_gpu249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_imgproc249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_legacy249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ml249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_nonfree249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_objdetect249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ocl249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_photo249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_stitching249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_superres249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_ts249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_video249.lib;..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\lib\vc2013\x86\opencv_videostab249.lib</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\..\..\libs\cinder_0.8.6_vc2013\lib\msw\$(PlatformTarget);$(DSROOT)\Lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>cinder-$(PlatformToolset).lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>"..\..\..\..\libs\Cinder\lib\msw\$(PlatformTarget)"</AdditionalLibraryDirectories>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <GenerateMapFile>true</GenerateMapFile>
       <SubSystem>Windows</SubSystem>
@@ -107,11 +106,10 @@
     <ResourceCompile Include="Resources.rc" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\DepthDelApp.cpp" />
+    <ClCompile Include="..\src\HP_CubesApp.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\Resources.h" />
-    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\Cinder-OpenCV\include\CinderOpenCV.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
