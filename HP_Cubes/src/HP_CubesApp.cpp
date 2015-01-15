@@ -1,3 +1,10 @@
+#ifdef _DEBUG
+#pragma comment(lib, "DSAPI32.dbg.lib")
+#else
+#pragma comment(lib, "DSAPI32.lib")
+#endif
+
+#include <memory>
 #include "cinder/app/AppNative.h"
 #include "cinder/app/RendererGl.h"
 #include "cinder/gl/Shader.h"
@@ -7,29 +14,95 @@
 #include "cinder/ObjLoader.h"
 #include "cinder/ImageIo.h"
 #include "cinder/Utilities.h"
+#include "DSAPI.h"
+#include "DSAPIUtil.h"
 
 using namespace ci;
 using namespace ci::app;
 using namespace std;
 
-class HP_CubesApp : public AppNative {
+typedef std::shared_ptr<DSAPI> DSAPIRef;
+
+
+ivec2 S_DEPTH_SIZE(480, 360);
+
+class HP_CubesApp : public AppNative
+{
 public:
 	void setup();
+	bool setupDSAPI();
 	void resize();
 	void update();
 	void draw();
+
+private:
+	DSAPIRef mDSAPI;
+	DSThird *mRGB;
+	DSCalibIntrinsicsRectified mZIntrinsics;
+
+	uint16_t *mDepthBuffer;
+	uint8_t *mRGBBuffer;
 
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
 	gl::TextureRef		mTexture;
 	gl::GlslProgRef		mGlsl;
 	gl::VboRef			mInstanceDataVbo;
+
 };
 
 const int NUM_INSTANCES_X = 240;
 const int NUM_INSTANCES_Y = 180;
 const float DRAW_SCALE = 500;
 const pair<float, float> CAMERA_Y_RANGE(32, 80);
+
+bool HP_CubesApp::setupDSAPI()
+{
+	bool retVal = true;
+	mDSAPI = DSAPIRef(DSCreate(DS_DS4_PLATFORM), DSDestroy);
+	if (!mDSAPI->probeConfiguration())
+	{
+		retVal = false;
+		console() << "Unable to get DS hardware config" << endl;
+	}
+	if (!mDSAPI->isCalibrationValid())
+	{
+		retVal = false;
+		console() << "Calibration is invalid" << endl;
+	}
+	if (!mDSAPI->enableLeft(true))
+	{
+		retVal = false;
+		console() << "Unable to start left stream" << endl;
+	}
+	if (!mDSAPI->enableRight(true))
+	{
+		retVal = false;
+		console() << "Unable to start right stream" << endl;
+	}
+	if (!mDSAPI->enableZ(true))
+	{
+		retVal = false;
+		console() << "Unable to start depth stream" << endl;
+	}
+	if (!mDSAPI->setLRZResolutionMode(true, S_DEPTH_SIZE.x, S_DEPTH_SIZE.y, 60, DS_LUMINANCE8))
+	{
+		retVal = false;
+		console() << "Unable to set requested depth resolution" << endl;
+	}
+	if (!mDSAPI->getCalibIntrinsicsZ(mZIntrinsics))
+	{
+		retVal = false;
+		console() << "Unable to set get depth intrinsics" << endl;
+	}
+	if (!mDSAPI->startCapture())
+	{
+		retVal = false;
+		console() << "Unable to start ds4" << endl;
+	}
+
+	return retVal;
+}
 
 void HP_CubesApp::setup()
 {
@@ -47,8 +120,10 @@ void HP_CubesApp::setup()
 
 	// create an array of initial per-instance positions laid out in a 2D grid
 	std::vector<vec3> positions;
-	for (size_t potX = 0; potX < NUM_INSTANCES_X; ++potX) {
-		for (size_t potY = 0; potY < NUM_INSTANCES_Y; ++potY) {
+	for (size_t potX = 0; potX < NUM_INSTANCES_X; ++potX) 
+	{
+		for (size_t potY = 0; potY < NUM_INSTANCES_Y; ++potY) 
+		{
 			float instanceX = potX / (float)NUM_INSTANCES_X - 0.5f;
 			float instanceY = potY / (float)NUM_INSTANCES_Y - 0.5f;
 			positions.push_back(vec3(instanceX * vec3(DRAW_SCALE, 0, 0) + instanceY * vec3(0, 0, DRAW_SCALE)));
@@ -90,8 +165,10 @@ void HP_CubesApp::update()
 
 	// update our instance positions; map our instance data VBO, write new positions, unmap
 	vec3 *positions = (vec3*)mInstanceDataVbo->mapWriteOnly(true);
-	for (size_t potX = 0; potX < NUM_INSTANCES_X; ++potX) {
-		for (size_t potY = 0; potY < NUM_INSTANCES_Y; ++potY) {
+	for (size_t potX = 0; potX < NUM_INSTANCES_X; ++potX) 
+	{
+		for (size_t potY = 0; potY < NUM_INSTANCES_Y; ++potY) 
+		{
 			float instanceX = potX / (float)NUM_INSTANCES_X - 0.5f;
 			float instanceY = potY / (float)NUM_INSTANCES_Y - 0.5f;
 			// just some nonsense math to move the teapots in a wave
