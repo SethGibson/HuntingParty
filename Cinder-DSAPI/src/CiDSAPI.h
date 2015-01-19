@@ -3,15 +3,28 @@
 #include <memory>
 #include "DSAPI.h"
 #include "DSAPIUtil.h"
+#include "cinder/CinderGlm.h"
+#include "cinder/gl/Texture.h"
+
+using namespace ci;
+using namespace std;
+using namespace glm;
 
 namespace CinderDS
 {
-	enum VideoResolution
+	enum FrameSize
 	{
 		DEPTHSD,	// 480x360
-		DEPTHVGA,	// 640x480
+		DEPTHVGA,	// 640x480 (628x468)
 		COLORVGA,	// 640x480
 		COLORHD,	// 1920x1080
+	};
+
+	enum StereoCam
+	{
+		DS_LEFT,
+		DS_RIGHT,
+		DS_BOTH
 	};
 
 	class CinderDSAPI;
@@ -24,30 +37,53 @@ namespace CinderDS
 		static CinderDSRef create();
 		~CinderDSAPI();
 
-		bool initColor(VideoResolution pRes, float pFPS);
-		bool initDepth(VideoResolution pRes, float pFPS);
-		bool initStereo(VideoResolution pRes, float pFPS, bool pLeft, bool pRight);
-		void start();
-		void update();
-		void stop();
+		bool initRgb(const FrameSize &pRes, const float &pFPS);
+		bool initDepth(const FrameSize &pRes, const float &pFPS);
+		bool initStereo(const FrameSize &pRes, const float &pFPS, const StereoCam &pWhich);
+		bool start();
+		bool update();
+		bool stop();
 
-		uint8_t* getColorFrame();
-		uint8_t* getLeftFrame();
-		uint8_t* getRightFrame();
-		uint16_t* getDepthFrame();
+		int getDepthWidth(){ return mLRZWidth; }
+		int getDepthHeight(){ return mLRZHeight; }
+		int getRgbWidth(){ return mRGBWidth; }
+		int getRgbHeight(){ return mRGBHeight; }
+		ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight);  }
+		ivec2 getRgbSize(){ return ivec2(mRGBWidth, mRGBHeight); }
+
+		Surface8u getColorFrame();
+		Channel8u getLeftFrame();
+		Channel8u getRightFrame();
+		Channel16u getDepthFrame();
+
+	protected:
+		CinderDSAPI();
 
 	private:
-		bool	mHasValidConfig,
-				mHasValidCalib;
+		bool	getConfigAndCalib();
+		bool	setupStream(const FrameSize &pRes, ivec2 &pOutSize);
 
-		bool	mHasColor,
-				mHasDepth,
-				mHasLeft,
-				mHasRight;
+		bool	mHasValidConfig,
+				mHasValidCalib,
+				mHasColor, mHasColorTex,
+				mHasDepth, mHasDepthTex,
+				mHasLeft, mHasLeftTex,
+				mHasRight, mHasRightTex,
+				mIsRunning,
+				mUpdated;
+
+		int		mLRZWidth,
+				mLRZHeight,
+				mRGBWidth,
+				mRGBHeight;
 
 		DSAPIRef	mDSAPI;
 		DSThird		*mDSRGB;
 
+		Surface8u mColorFrame;
+		Channel8u mLeftFrame;
+		Channel8u mRightFrame;
+		Channel16u mDepthFrame;
 	};
 };
 #endif
