@@ -3,12 +3,13 @@
 #include <memory>
 #include "DSAPI.h"
 #include "DSAPIUtil.h"
+#include "cinder/Channel.h"
 #include "cinder/CinderGlm.h"
 #include "cinder/gl/Texture.h"
+#include "cinder/Surface.h"
 
 using namespace ci;
 using namespace std;
-using namespace glm;
 
 namespace CinderDS
 {
@@ -16,8 +17,8 @@ namespace CinderDS
 	{
 		DEPTHSD,	// 480x360
 		DEPTHVGA,	// 640x480 (628x468)
-		COLORVGA,	// 640x480
-		COLORHD,	// 1920x1080
+		RGBVGA,	// 640x480
+		RGBHD,	// 1920x1080
 	};
 
 	enum StereoCam
@@ -27,16 +28,23 @@ namespace CinderDS
 		DS_BOTH
 	};
 
+	typedef pair<int, uint32_t> camera_type;
+	static vector<camera_type> GetCameraList();
+
 	class CinderDSAPI;
 	typedef std::shared_ptr<DSAPI> DSAPIRef;
 	typedef std::shared_ptr<CinderDSAPI> CinderDSRef;
 
 	class CinderDSAPI
 	{
+	protected:
+		CinderDSAPI();
 	public:
 		static CinderDSRef create();
 		~CinderDSAPI();
 
+		bool init();
+		bool init(uint32_t pSerialNo);
 		bool initRgb(const FrameSize &pRes, const float &pFPS);
 		bool initDepth(const FrameSize &pRes, const float &pFPS);
 		bool initStereo(const FrameSize &pRes, const float &pFPS, const StereoCam &pWhich);
@@ -46,44 +54,47 @@ namespace CinderDS
 
 		int getDepthWidth(){ return mLRZWidth; }
 		int getDepthHeight(){ return mLRZHeight; }
-		int getRgbWidth(){ return mRGBWidth; }
-		int getRgbHeight(){ return mRGBHeight; }
-		ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight);  }
-		ivec2 getRgbSize(){ return ivec2(mRGBWidth, mRGBHeight); }
+		int getRgbWidth(){ return mRgbWidth; }
+		int getRgbHeight(){ return mRgbHeight; }
+		const ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight); }
+		const ivec2 getRgbSize(){ return ivec2(mRgbWidth, mRgbHeight); }
 
-		Surface8u getColorFrame();
-		Channel8u getLeftFrame();
-		Channel8u getRightFrame();
-		Channel16u getDepthFrame();
-
-	protected:
-		CinderDSAPI();
+		const Surface8u& getRgbFrame();
+		const Channel8u& getLeftFrame();
+		const Channel8u& getRightFrame();
+		const Channel16u& getDepthFrame();
 
 	private:
-		bool	getConfigAndCalib();
+		bool	open();
 		bool	setupStream(const FrameSize &pRes, ivec2 &pOutSize);
 
 		bool	mHasValidConfig,
 				mHasValidCalib,
-				mHasColor, mHasColorTex,
-				mHasDepth, mHasDepthTex,
-				mHasLeft, mHasLeftTex,
-				mHasRight, mHasRightTex,
-				mIsRunning,
+				mHasRgb,
+				mHasDepth,
+				mHasLeft,
+				mHasRight,
+				mIsInit,
 				mUpdated;
 
-		int		mLRZWidth,
+		int32_t	mLRZWidth,
 				mLRZHeight,
-				mRGBWidth,
-				mRGBHeight;
+				mRgbWidth,
+				mRgbHeight;
 
 		DSAPIRef	mDSAPI;
 		DSThird		*mDSRGB;
 
-		Surface8u mColorFrame;
+		Surface8u mRgbFrame;
 		Channel8u mLeftFrame;
 		Channel8u mRightFrame;
 		Channel16u mDepthFrame;
+
+		Surface8uRef mRgbFrameRef;
+		Channel8uRef mLeftFrameRef;
+		Channel8uRef mRightFrameRef;
+		Channel16uRef mDepthFrameRef;
+
 	};
 };
 #endif

@@ -107,11 +107,11 @@
     <ResourceCompile Include="Resources.rc" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\..\libs\Cinder\blocks\Cinder-DSAPI\src\CiDSAPI.cpp" />
+    <ClCompile Include="..\..\Cinder-DSAPI\src\CiDSAPI.cpp" />
     <ClCompile Include="..\src\HP_WaitingRTApp.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\..\libs\Cinder\blocks\Cinder-DSAPI\src\CiDSAPI.h" />
+    <ClInclude Include="..\..\Cinder-DSAPI\src\CiDSAPI.h" />
     <ClInclude Include="..\include\Resources.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
