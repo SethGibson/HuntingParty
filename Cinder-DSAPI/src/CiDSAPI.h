@@ -23,7 +23,7 @@ namespace CinderDS
 
 	enum StereoCam
 	{
-		DS_LEFT = DSWhichImager::DS_LEFT_IMAGER,
+		DS_LEFT = DSWhichImager::DS_LEFT_IMAGER,	// this may be useful later
 		DS_RIGHT = DSWhichImager::DS_RIGHT_IMAGER,
 		DS_BOTH = DSWhichImager::DS_BOTH_IMAGERS
 	};
@@ -102,7 +102,7 @@ namespace CinderDS
 		Surface8u		mRgbFrame;
 		Channel8u		mLeftFrame;
 		Channel8u		mRightFrame;
-		Channel16u			mDepthFrame;
+		Channel16u		mDepthFrame;
 
 		Surface8uRef	mRgbFrameRef;
 		Channel8uRef	mLeftFrameRef;
