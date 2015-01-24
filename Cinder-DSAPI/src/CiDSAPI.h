@@ -23,9 +23,9 @@ namespace CinderDS
 
 	enum StereoCam
 	{
-		DS_LEFT,
-		DS_RIGHT,
-		DS_BOTH
+		DS_LEFT = DSWhichImager::DS_LEFT_IMAGER,
+		DS_RIGHT = DSWhichImager::DS_RIGHT_IMAGER,
+		DS_BOTH = DSWhichImager::DS_BOTH_IMAGERS
 	};
 
 	typedef pair<int, uint32_t> camera_type;
@@ -45,25 +45,36 @@ namespace CinderDS
 
 		bool init();
 		bool init(uint32_t pSerialNo);
-		bool initRgb(const FrameSize &pRes, const float &pFPS);
-		bool initDepth(const FrameSize &pRes, const float &pFPS);
-		bool initStereo(const FrameSize &pRes, const float &pFPS, const StereoCam &pWhich);
+		bool initRgb(const FrameSize &pRes, const int &pFPS);
+		bool initDepth(const FrameSize &pRes, const int &pFPS);
+		bool initStereo(const FrameSize &pRes, const int &pFPS, const StereoCam &pWhich);
 		bool start();
 		bool update();
 		bool stop();
-
-		int getDepthWidth(){ return mLRZWidth; }
-		int getDepthHeight(){ return mLRZHeight; }
-		int getRgbWidth(){ return mRgbWidth; }
-		int getRgbHeight(){ return mRgbHeight; }
-		const ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight); }
-		const ivec2 getRgbSize(){ return ivec2(mRgbWidth, mRgbHeight); }
 
 		const Surface8u& getRgbFrame();
 		const Channel8u& getLeftFrame();
 		const Channel8u& getRightFrame();
 		const Channel16u& getDepthFrame();
 
+		const vec3 getDepthSpacePoint(float pX, float pY, float pZ);	// get a 3d point from depth image coords (image x, image y, depth)
+		const vec3 getDepthSpacePoint(int pX, int pY, uint16_t pZ);		// get a 3d point from depth image coords (image x, image y, depth)
+		const vec3 getDepthSpacePoint(vec3 pPoint);						// get a 3d point from depth image coords (image x, image y, depth)
+
+		const Color getColorAtDepth(float pX, float pY, float pZ);		//get a Color object from depth image coords (image x, image y, depth)
+		const Color getColorAtDepth(int pX, int pY, uint16_t pZ);		//get a Color object from depth image coords (image x, image y, depth)
+		const Color getColorAtDepth(vec3 pPoint);						//get a Color object from depth image coords (image x, image y, depth)
+
+		int getDepthWidth(){ return mLRZWidth; }
+		int getDepthHeight(){ return mLRZHeight; }
+		const ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight); }
+		const vec2 getDepthFOVs();
+
+		int getRgbWidth(){ return mRgbWidth; }
+		int getRgbHeight(){ return mRgbHeight; }
+		const ivec2 getRgbSize(){ return ivec2(mRgbWidth, mRgbHeight); }
+		const vec2 getRgbFOVs();
+		
 	private:
 		bool	open();
 		bool	setupStream(const FrameSize &pRes, ivec2 &pOutSize);
@@ -84,16 +95,19 @@ namespace CinderDS
 
 		DSAPIRef	mDSAPI;
 		DSThird		*mDSRGB;
+		DSCalibIntrinsicsRectified	mZIntrinsics;
+		DSCalibIntrinsicsRectified	mRgbIntrinsics;
+		double						mZToRgb[3];
 
-		Surface8u mRgbFrame;
-		Channel8u mLeftFrame;
-		Channel8u mRightFrame;
-		Channel16u mDepthFrame;
+		Surface8u		mRgbFrame;
+		Channel8u		mLeftFrame;
+		Channel8u		mRightFrame;
+		Channel16u			mDepthFrame;
 
-		Surface8uRef mRgbFrameRef;
-		Channel8uRef mLeftFrameRef;
-		Channel8uRef mRightFrameRef;
-		Channel16uRef mDepthFrameRef;
+		Surface8uRef	mRgbFrameRef;
+		Channel8uRef	mLeftFrameRef;
+		Channel8uRef	mRightFrameRef;
+		Channel16uRef	mDepthFrameRef;
 
 	};
 };
