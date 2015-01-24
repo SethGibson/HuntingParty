@@ -8,13 +8,14 @@
 #include "cinder/app/RendererGl.h"
 #include "cinder/gl/gl.h"
 
+#include "cinder/Rand.h"
+
+#include "cinder/gl/gl.h"
+#include "cinder/gl/Context.h"
 #include "cinder/gl/Shader.h"
-#include "cinder/gl/Texture.h"
-#include "cinder/gl/Batch.h"
-#include "cinder/gl/VboMesh.h"
-#include "cinder/ObjLoader.h"
-#include "cinder/ImageIo.h"
-#include "cinder/Utilities.h"
+#include "cinder/gl/Vbo.h"
+#include "cinder/gl/Vao.h"
+#include "cinder/gl/GlslProg.h"
 
 #include "CiDSAPI.h"
 //#include "DSAPI.h"
@@ -25,6 +26,21 @@ using namespace ci;
 using namespace ci::app;
 using namespace std;
 using namespace CinderDS;
+
+/**
+Particle type holds information for rendering and simulation.
+Used to buffer initial simulation values.
+*/
+struct Particle
+{
+	vec3	pos;
+	vec3	ppos;
+	vec3	home;
+	ColorA  color;
+	float	damping;
+};
+
+int NUM_PARTICLES = 300e3;
 
 class HP_WaitingRTApp : public AppNative
 {
@@ -45,12 +61,20 @@ private:
 	Surface8u mRgbBuffer;
 	Channel16u mDepthBuffer;
 
-	CameraPersp			mCam;
-	gl::BatchRef		mBatch;
-	gl::TextureRef		mTexture;
-	gl::GlslProgRef		mGlsl;
-	gl::VboRef			mInstanceDataVbo;
+	gl::GlslProgRef mRenderProg;
+	gl::GlslProgRef mUpdateProg;
+
+	// Descriptions of particle data layout.
+	gl::VaoRef		mAttributes[2];
+	// Buffers holding raw particle data on GPU.
+	gl::VboRef		mParticleBuffer[2];
+
+	// Current source and destination buffers for transform feedback.
+	// Source and destination are swapped each frame after update.
+	std::uint32_t	mSourceIndex = 0;
+	std::uint32_t	mDestinationIndex = 1;
 };
+
 
 const float DRAW_SCALE = 1;
 const pair<float, float> CAMERA_Y_RANGE(-100, 600);
@@ -63,48 +87,76 @@ void HP_WaitingRTApp::setup()
 	mDSAPI->initDepth(CinderDS::FrameSize::DEPTHSD, 60);
 	mDSAPI->initRgb(CinderDS::FrameSize::RGBVGA, 60);
 	mDSAPI->start();
+
+	NUM_PARTICLES = mDSAPI->getDepthWidth() * mDSAPI->getDepthHeight();
 	
 	//END DSAPI INIT
 
-	//INSTANCED TEAPOTS INIT
-	mCam.lookAt(vec3(0, CAMERA_Y_RANGE.first, 0), vec3(0));
-
-	mTexture = gl::Texture::create(loadImage(loadAsset("texture.jpg")), gl::Texture::Format().mipmap());
-#if ! defined( CINDER_GL_ES )
-	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
-#else
-	mGlsl = gl::GlslProg::create(loadAsset("shader_es2.vert"), loadAsset("shader_es2.frag"));
-#endif
-
-	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Sphere());
-
-	// create an array of initial per-instance positions laid out in a 2D grid
-	std::vector<vec3> positions;
-	for (size_t potX = 0; potX < mDSAPI->getDepthWidth(); ++potX) {
-		for (size_t potY = 0; potY < mDSAPI->getDepthHeight(); ++potY) {
-			float instanceX = potX / (float)mDSAPI->getDepthWidth() - 0.5f;
-			float instanceY = potY / (float)mDSAPI->getDepthHeight() - 0.5f;
-			positions.push_back(vec3(instanceX * vec3(DRAW_SCALE, 0, 0) + instanceY * vec3(0, 0, DRAW_SCALE)));
+	//GPU PARTICLES INIT
+	// Create initial particle layout.
+	vector<Particle> particles;
+	particles.assign(NUM_PARTICLES, Particle());
+	const float azimuth = 256.0f * M_PI / particles.size();
+	const float inclination = M_PI / particles.size();
+	const float radius = 180.0f;
+	for (int y = 0; y < mDSAPI->getDepthHeight(); y++)
+	{
+		for (int x = 0; x < mDSAPI->getDepthWidth(); x++)
+		{
+			int i = x + (y * mDSAPI->getDepthWidth());
+			auto &p = particles.at(i);
+			p.pos = vec3(x, y, 0);
+			p.home = p.pos;
+			p.ppos = p.home + Rand::randVec3f() * 10.0f; // random initial velocity
+			p.damping = Rand::randFloat(0.965f, 0.985f);
+			p.color = Color(CM_HSV, lmap<float>(i, 0.0f, particles.size(), 0.0f, 0.66f), 1.0f, 1.0f);
 		}
 	}
 
-	// create the VBO which will contain per-instance (rather than per-vertex) data
-	mInstanceDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
+	// Create particle buffers on GPU and copy data into the first buffer.
+	// Mark as static since we only write from the CPU once.
+	mParticleBuffer[mSourceIndex] = gl::Vbo::create(GL_ARRAY_BUFFER, particles.size() * sizeof(Particle), particles.data(), GL_STATIC_DRAW);
+	mParticleBuffer[mDestinationIndex] = gl::Vbo::create(GL_ARRAY_BUFFER, particles.size() * sizeof(Particle), nullptr, GL_STATIC_DRAW);
 
-	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
-	geom::BufferLayout instanceDataLayout;
-	instanceDataLayout.append(geom::Attrib::CUSTOM_0, 3, 0, 0, 1 /* per instance */);
+	// Create a default color shader.
+	mRenderProg = gl::getStockShader(gl::ShaderDef().color());
 
-	// now add it to the VboMesh we already made of the Teapot
-	mesh->appendVbo(instanceDataLayout, mInstanceDataVbo);
+	for (int i = 0; i < 2; ++i)
+	{	// Describe the particle layout for OpenGL.
+		mAttributes[i] = gl::Vao::create();
+		gl::ScopedVao vao(mAttributes[i]);
 
-	// and finally, build our batch, mapping our CUSTOM_0 attribute to the "vInstancePosition" GLSL vertex attribute
-	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" } });
+		// Define attributes as offsets into the bound particle buffer
+		gl::ScopedBuffer buffer(mParticleBuffer[i]);
+		gl::enableVertexAttribArray(0);
+		gl::enableVertexAttribArray(1);
+		gl::enableVertexAttribArray(2);
+		gl::enableVertexAttribArray(3);
+		gl::enableVertexAttribArray(4);
+		gl::vertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Particle), (const GLvoid*)offsetof(Particle, pos));
+		gl::vertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(Particle), (const GLvoid*)offsetof(Particle, color));
+		gl::vertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Particle), (const GLvoid*)offsetof(Particle, ppos));
+		gl::vertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Particle), (const GLvoid*)offsetof(Particle, home));
+		gl::vertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(Particle), (const GLvoid*)offsetof(Particle, damping));
+	}
 
-	gl::enableDepthWrite();
-	gl::enableDepthRead();
+	// Load our update program.
+	// Match up our attribute locations with the description we gave.
 
-	mTexture->bind();
+#if defined( CINDER_GL_ES_3 )
+	mUpdateProg = gl::GlslProg::create(gl::GlslProg::Format().vertex(loadAsset("particleUpdate_es3.vs"))
+		.fragment(loadAsset("no_op_es3.fs"))
+#else
+	mUpdateProg = gl::GlslProg::create(gl::GlslProg::Format().vertex(loadAsset("particleUpdate.vs"))
+#endif
+		.feedbackFormat(GL_INTERLEAVED_ATTRIBS)
+		.feedbackVaryings({ "position", "pposition", "home", "color", "damping" })
+		.attribLocation("iPosition", 0)
+		.attribLocation("iColor", 1)
+		.attribLocation("iPPosition", 2)
+		.attribLocation("iHome", 3)
+		.attribLocation("iDamping", 4)
+		);
 }
 
 void HP_WaitingRTApp::shutdown()
@@ -125,29 +177,24 @@ void HP_WaitingRTApp::update()
 
 	console() << getFrameRate() << endl;
 
-	//INSTANCED TEAPOT UPDATE
-	// move the camera up and down on Y
-	mCam.lookAt(vec3(0, CAMERA_Y_RANGE.first + abs(sin(getElapsedSeconds() / 4)) * (CAMERA_Y_RANGE.second - CAMERA_Y_RANGE.first), 0), vec3(0));
+	//GPU PARTICLES UPDATE
+	// Update particles on the GPU
+	gl::ScopedGlslProg prog(mUpdateProg);
+	gl::ScopedState rasterizer(GL_RASTERIZER_DISCARD, true);	// turn off fragment stage
 
-	// update our instance positions; map our instance data VBO, write new positions, unmap
-	vec3 *positions = (vec3*)mInstanceDataVbo->mapWriteOnly(true);
+	// Bind the source data (Attributes refer to specific buffers).
+	gl::ScopedVao source(mAttributes[mSourceIndex]);
+	// Bind destination as buffer base.
+	gl::bindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mParticleBuffer[mDestinationIndex]);
+	gl::beginTransformFeedback(GL_POINTS);
 
-	Channel16u::Iter iter = mDepthBuffer.getIter();
-	while (iter.line())
-	{
-		while (iter.pixel())
-		{
-			if (iter.v() != 0)
-			{
-				float instanceX = iter.x() / (float)mDSAPI->getDepthWidth() - 0.5f;
-				float instanceY = iter.y() / (float)mDSAPI->getDepthHeight() - 0.5f;
+	// Draw source into destination, performing our vertex transformations.
+	gl::drawArrays(GL_POINTS, 0, NUM_PARTICLES);
 
-				*positions++ = vec3(instanceX, instanceY, lmap<uint16_t>(iter.v(), 490, 5000, 0, 500));
-			}
-		}
-	}
+	gl::endTransformFeedback();
 
-	mInstanceDataVbo->unmap();
+	// Swap source and destination for next loop
+	std::swap(mSourceIndex, mDestinationIndex);
 }
 
 void HP_WaitingRTApp::draw()
@@ -174,14 +221,14 @@ void HP_WaitingRTApp::draw()
 	//	}
 	//}
 
-	gl::setMatrices(mCam);
+	gl::setMatricesWindowPersp(getWindowSize());
+	gl::enableDepthRead();
+	gl::enableDepthWrite();
 
-	mBatch->drawInstanced(mDSAPI->getDepthWidth() * mDSAPI->getDepthHeight());
+	gl::ScopedGlslProg render(mRenderProg);
+	gl::ScopedVao vao(mAttributes[mSourceIndex]);
+	gl::context()->setDefaultShaderVars();
+	gl::drawArrays(GL_POINTS, 0, NUM_PARTICLES);
 }
 
-#if defined( CINDER_MSW ) && ! defined( CINDER_GL_ANGLE )
-auto options = RendererGl::Options().version(3, 3); // instancing functions are technically only in GL 3.3
-#else
-auto options = RendererGl::Options(); // implemented as extensions in Mac OS 10.7+
-#endif
-CINDER_APP_NATIVE(HP_WaitingRTApp, RendererGl(options))
+CINDER_APP_NATIVE(HP_WaitingRTApp, RendererGl)
