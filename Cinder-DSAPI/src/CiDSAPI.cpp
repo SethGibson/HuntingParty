@@ -280,10 +280,10 @@ namespace CinderDS
 				pOutSize = ivec2(1920, 1080);
 				break;
 			case DEPTHSD:
-				pOutSize = ivec2(628, 468);
+				pOutSize = ivec2(480, 360);
 				break;
 			case DEPTHVGA:
-				pOutSize = ivec2(640, 480);
+				pOutSize = ivec2(628, 468);
 				break;
 			}
 			return true;
