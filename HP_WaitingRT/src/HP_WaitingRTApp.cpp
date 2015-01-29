@@ -32,32 +32,40 @@ struct ParticleInstance
 {
 public:
 	vec3 InitialPosition;
-	//vec2 DepthPixelCoord;
-	float SpawnTime;
+	vec2 DepthPixelCoord;
 
-	ParticleInstance(vec3 startPos, /*vec2 depthPixelCoord, */float currentTime)
+	ParticleInstance(vec3 startPos, vec2 depthPixelCoord, float currentTime)
 	{
 		InitialPosition = startPos;
-		//DepthPixelCoord = depthPixelCoord;
-		SpawnTime = currentTime;
+		DepthPixelCoord = depthPixelCoord;
 	}
 };
 
 const static float Gravity = -9.8;
-const static int MaxNumberDyingParticleBufferSize = 100000;
+const static int MaxNumberDyingParticleBufferSize = 100000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
 
 class DyingParticlesManager
 {
 	const float DeathLifetimeInSeconds = 0.2;
 
 private:
+
+	void KillFrontParticleBatch()
+	{
+		CurrentTotalParticles -= mDyingParticleBatches.front().size();
+
+		mDyingParticleBatches.pop_front();
+		BatchCreationTime.pop_front();
+	}
+
 	vec3 ParticlePositionWithGravityOffset(ParticleInstance particle, float totalLivingTime, float gravity = Gravity)
 	{
 		return vec3(particle.InitialPosition.x, particle.InitialPosition.y + (gravity * totalLivingTime) * 10, particle.InitialPosition.z);
 	}
 
 public:
-	std::deque<ParticleInstance> mDyingParticles;
+	std::deque<std::vector<ParticleInstance>> mDyingParticleBatches;
+	std::deque<float> BatchCreationTime;
 
 	int CurrentTotalParticles = 0;
 
@@ -66,37 +74,45 @@ public:
 
 	}
 
-	void AddDyingParticle(ParticleInstance particle)
+	int ManualCount()
 	{
-		if (CurrentTotalParticles < MaxNumberDyingParticleBufferSize)
+		int count = 0;
+		for (int i = 0; i < mDyingParticleBatches.size(); i++)
 		{
-			mDyingParticles.push_back(particle);
-			CurrentTotalParticles++;
+			count += mDyingParticleBatches[i].size();
 		}
-		else
+
+		return (count);
+	}
+
+	void AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
+	{
+		if (CurrentTotalParticles + particles.size() <= MaxNumberDyingParticleBufferSize)
 		{
-			mDyingParticles.pop_front();
-			mDyingParticles.push_back(particle);
+			CurrentTotalParticles += particles.size();
+
+			mDyingParticleBatches.push_back(particles);
+			BatchCreationTime.push_back(currentTime);
 		}
-		
-		/* Sterling's weird way of appending a std::vector onto the end of a deque that's pretty fast? */
-		/////std::vector<ParticleInstance> particles
-		//mDyingParticles.insert(end(mDyingParticles), begin(particles), end(particles));
 	}
 
 	void CleanupUpdate(float currentTime)
 	{
-		while (mDyingParticles.empty() == false && mDyingParticles.front().SpawnTime + DeathLifetimeInSeconds < currentTime)
+		while (BatchCreationTime.empty() == false && BatchCreationTime.front() + DeathLifetimeInSeconds < currentTime)
 		{
-			mDyingParticles.pop_front();
+			KillFrontParticleBatch();
 		}
 	}
 
 	void SetupBatchDraw(vec3 *mappedPositionsVBO, float currentTime)
 	{
-		for (int i = 0; i < mDyingParticles.size(); i++)
+		for (int i = 0; i < mDyingParticleBatches.size(); i++)
 		{
-			*mappedPositionsVBO++ = ParticlePositionWithGravityOffset(mDyingParticles[i], currentTime - mDyingParticles[i].SpawnTime);
+			for (int j = 0; j < mDyingParticleBatches[i].size(); j++)
+			{
+				//we should never end up rendering more than the buffer can hold because the "Add" function checks for that.
+				*mappedPositionsVBO++ = ParticlePositionWithGravityOffset(mDyingParticleBatches[i][j], currentTime - BatchCreationTime[i]);
+			}
 		}
 	}
 };
@@ -130,10 +146,11 @@ public:
 	Channel16u mDepthBuffer;
 
 	std::vector<bool> mPreviouslyHadDepth;
-	std::vector<bool> mCurrentlyHasDeadInstance;
+	//std::vector<bool> mCurrentlyHasDeadInstance;
 	std::vector<vec3> mPreviousValidDepthCoord;
 
 	DyingParticlesManager mDyingParticleManager;
+	//std::ofstream out;
 };
 
 int width;
@@ -147,6 +164,9 @@ const float MaxDeathTimeSeconds = 5;
 
 void HP_WaitingRTApp::setup()
 {
+	//out = std::ofstream("output.txt");
+
+
 	mDSAPI = CinderDSAPI::create();
 	mDSAPI->init();
 	mDSAPI->initDepth(CinderDS::FrameSize::DEPTHSD, 60);
@@ -188,7 +208,7 @@ void HP_WaitingRTApp::setup()
 			cubeScales.push_back(randFloat(0.2, 5));
 
 			mPreviouslyHadDepth.push_back(false);
-			mCurrentlyHasDeadInstance.push_back(false);
+			//mCurrentlyHasDeadInstance.push_back(false);
 			mPreviousValidDepthCoord.push_back(pos);
 		}
 	}
@@ -232,6 +252,7 @@ void HP_WaitingRTApp::setup()
 void HP_WaitingRTApp::shutdown()
 {
 	mDSAPI->stop();
+	//out.close();
 }
 
 void HP_WaitingRTApp::resize()
@@ -246,9 +267,13 @@ void HP_WaitingRTApp::resize()
 
 void HP_WaitingRTApp::update()
 {
+
 	float elapsed = getElapsedSeconds();
 	float frameTime = elapsed - previousElapsedTime;
 	previousElapsedTime = elapsed;
+
+	//cleanup any old particles before setting up the draw.
+	mDyingParticleManager.CleanupUpdate(elapsed);
 
 	mDSAPI->update();
 
@@ -259,6 +284,8 @@ void HP_WaitingRTApp::update()
 	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
 	float *scales = (float*)mInstanceScaleVbo->mapWriteOnly(true);
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
+
+	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
 
 	numberToDraw = 0;
 
@@ -289,18 +316,19 @@ void HP_WaitingRTApp::update()
 			}
 			else //no depth here now, if there was depth, start dying.
 			{
-				if (mDyingParticleManager.CurrentTotalParticles < MaxNumberDyingParticleBufferSize && mPreviouslyHadDepth[potX + (potY * width)]) //there was depth and it just died
+				if (mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MaxNumberDyingParticleBufferSize &&
+					mPreviouslyHadDepth[potX + (potY * width)]) //there was depth and it just died
 				{
-					mDyingParticleManager.AddDyingParticle(ParticleInstance(mPreviousValidDepthCoord[potX + (potY * width)],/* vec2(potX, potY), */elapsed));
+					dyingParticlesToAdd.push_back(ParticleInstance(mPreviousValidDepthCoord[potX + (potY * width)], vec2(potX, potY), elapsed));
 				}
 
 				mPreviouslyHadDepth[potX + (potY * width)] = false;
 			}
 		}
 	}
-
-	//cleanup any old particles before setting up the draw.
-	mDyingParticleManager.CleanupUpdate(elapsed);
+	
+	if (dyingParticlesToAdd.size() > 0)
+		mDyingParticleManager.AddDyingParticleBatch(dyingParticlesToAdd, elapsed);
 
 	//setup the gpu memory positions
 	mDyingParticleManager.SetupBatchDraw(deathPositions, elapsed);
@@ -330,7 +358,7 @@ void HP_WaitingRTApp::draw()
 	mGlslDyingCubes->bind();
 	mGlslDyingCubes->uniform("rotationMatrix", blah);
 
-	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles); //
+	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
 	mBatch->drawInstanced(numberToDraw);
 
 	//console() << numberToDraw << endl;
