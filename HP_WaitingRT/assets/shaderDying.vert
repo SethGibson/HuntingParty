@@ -10,7 +10,6 @@ in vec3		ciNormal;
 in vec4		ciColor;
 in float	fCubeScale;
 in vec3		vDeathPosition; // per-instance position variable at time of death
-in float	fSecondsSinceDeath; // total time since death of the cube (should be affected by gravity)
 
 out vec3 Position; // In world space
 
@@ -67,7 +66,6 @@ vec3 HSLToRGB(vec3 hsl)
 void main( void )
 {
 	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * 6 * ciPosition)).xyz, ciPosition.w) + vec4( vDeathPosition, 0 ) );
-	gl_Position.y = gl_Position.y + 10 * (-9.8 * fSecondsSinceDeath) * (-9.8 * fSecondsSinceDeath) / (2 * -9.8);
 	Color 		=  vec4( HSLToRGB(vec3(0 + (1 - 0) * ((gl_Position.z - 500) / (2000 - 500)), 1.0, 0.5)), 1);
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;

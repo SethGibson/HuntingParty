@@ -19,6 +19,7 @@
 #include "cinder/Rand.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "CinderOpenCV.h"
+#include <deque>
 
 
 using namespace ci;
@@ -26,6 +27,80 @@ using namespace ci::app;
 using namespace std;
 using namespace CinderDS;
 using namespace cv;
+
+struct ParticleInstance
+{
+public:
+	vec3 InitialPosition;
+	//vec2 DepthPixelCoord;
+	float SpawnTime;
+
+	ParticleInstance(vec3 startPos, /*vec2 depthPixelCoord, */float currentTime)
+	{
+		InitialPosition = startPos;
+		//DepthPixelCoord = depthPixelCoord;
+		SpawnTime = currentTime;
+	}
+};
+
+const static float Gravity = -9.8;
+const static int MaxNumberDyingParticleBufferSize = 100000;
+
+class DyingParticlesManager
+{
+	const float DeathLifetimeInSeconds = 0.2;
+
+private:
+	vec3 ParticlePositionWithGravityOffset(ParticleInstance particle, float totalLivingTime, float gravity = Gravity)
+	{
+		return vec3(particle.InitialPosition.x, particle.InitialPosition.y + (gravity * totalLivingTime) * 10, particle.InitialPosition.z);
+	}
+
+public:
+	std::deque<ParticleInstance> mDyingParticles;
+
+	int CurrentTotalParticles = 0;
+
+	DyingParticlesManager()
+	{
+
+	}
+
+	void AddDyingParticle(ParticleInstance particle)
+	{
+		if (CurrentTotalParticles < MaxNumberDyingParticleBufferSize)
+		{
+			mDyingParticles.push_back(particle);
+			CurrentTotalParticles++;
+		}
+		else
+		{
+			mDyingParticles.pop_front();
+			mDyingParticles.push_back(particle);
+		}
+		
+		/* Sterling's weird way of appending a std::vector onto the end of a deque that's pretty fast? */
+		/////std::vector<ParticleInstance> particles
+		//mDyingParticles.insert(end(mDyingParticles), begin(particles), end(particles));
+	}
+
+	void CleanupUpdate(float currentTime)
+	{
+		while (mDyingParticles.empty() == false && mDyingParticles.front().SpawnTime + DeathLifetimeInSeconds < currentTime)
+		{
+			mDyingParticles.pop_front();
+		}
+	}
+
+	void SetupBatchDraw(vec3 *mappedPositionsVBO, float currentTime)
+	{
+		for (int i = 0; i < mDyingParticles.size(); i++)
+		{
+			*mappedPositionsVBO++ = ParticlePositionWithGravityOffset(mDyingParticles[i], currentTime - mDyingParticles[i].SpawnTime);
+		}
+	}
+};
+
 
 class HP_WaitingRTApp : public AppNative {
 public:
@@ -43,10 +118,9 @@ public:
 	gl::TextureRef		mTexture;
 	gl::GlslProgRef		mGlsl;
 	gl::GlslProgRef		mGlslDyingCubes;
-	gl::VboRef			mInstanceDataVbo;
+	gl::VboRef			mInstancePositionVbo;
 	gl::VboRef			mInstanceScaleVbo;
 	gl::VboRef			mInstanceDyingDataVbo;
-	gl::VboRef			mInstanceDyingTotalTimeVbo;
 
 	//DSAPI
 	CinderDSRef mDSAPI;
@@ -57,14 +131,14 @@ public:
 
 	std::vector<bool> mPreviouslyHadDepth;
 	std::vector<bool> mCurrentlyHasDeadInstance;
-	std::vector<float> mTimeOfDeath;
-	std::vector<vec3> mDeadParticleStartingPositions;
+	std::vector<vec3> mPreviousValidDepthCoord;
+
+	DyingParticlesManager mDyingParticleManager;
 };
 
 int width;
 int height;
 int numberToDraw = 0;
-int numberOfDyingToDraw = 0;
 
 double previousElapsedTime = 0;
 
@@ -103,8 +177,7 @@ void HP_WaitingRTApp::setup()
 	// create an array of initial per-instance positions laid out in a 2D grid
 	std::vector<vec3> positions;
 	std::vector<float> cubeScales;
-	std::vector<vec3> deathPositions;
-	std::vector<float> totalTimesSinceDeath;
+	std::vector<vec3> deathPositions = std::vector <vec3>(MaxNumberDyingParticleBufferSize);
 	for (size_t potX = 0; potX < width; ++potX) {
 		for (size_t potY = 0; potY < height; ++potY) {
 			float instanceX = potX / (float)width - 0.5f;
@@ -114,21 +187,16 @@ void HP_WaitingRTApp::setup()
 
 			cubeScales.push_back(randFloat(0.2, 5));
 
-			deathPositions.push_back(pos);
-			totalTimesSinceDeath.push_back(0.0);
-
 			mPreviouslyHadDepth.push_back(false);
 			mCurrentlyHasDeadInstance.push_back(false);
-			mTimeOfDeath.push_back(0.0);
-			mDeadParticleStartingPositions.push_back(pos);
+			mPreviousValidDepthCoord.push_back(pos);
 		}
 	}
 
 	// create the VBO which will contain per-instance (rather than per-vertex) data
-	mInstanceDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
+	mInstancePositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
 	mInstanceScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, cubeScales.size() * sizeof(float), cubeScales.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, deathPositions.size() * sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingTotalTimeVbo = gl::Vbo::create(GL_ARRAY_BUFFER, totalTimesSinceDeath.size() * sizeof(float), totalTimesSinceDeath.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize) * sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
 
 	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
 	geom::BufferLayout instanceDataLayout;
@@ -138,7 +206,7 @@ void HP_WaitingRTApp::setup()
 	instanceScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
 
 	// now add it to the VboMesh we already made of the Teapot
-	mesh->appendVbo(instanceDataLayout, mInstanceDataVbo);
+	mesh->appendVbo(instanceDataLayout, mInstancePositionVbo);
 	mesh->appendVbo(instanceScaleLayout, mInstanceScaleVbo);
 
 	// and finally, build our batch, mapping our CUSTOM_0 attribute to the "vInstancePosition" GLSL vertex attribute
@@ -148,14 +216,10 @@ void HP_WaitingRTApp::setup()
 	geom::BufferLayout instanceDyingDataLayout;
 	instanceDyingDataLayout.append(geom::Attrib::CUSTOM_2, 3, 0, 0, 1 /* per instance */);
 
-	geom::BufferLayout instanceDeathTimeLayout;
-	instanceDeathTimeLayout.append(geom::Attrib::CUSTOM_3, 1, 0, 0, 1 /* per instance */);
-
 	meshDying->appendVbo(instanceScaleLayout, mInstanceScaleVbo);
 	meshDying->appendVbo(instanceDyingDataLayout, mInstanceDyingDataVbo);
-	meshDying->appendVbo(instanceDeathTimeLayout, mInstanceDyingTotalTimeVbo);
 
-	mBatchDyingCubes = gl::Batch::create(meshDying, mGlslDyingCubes, { { geom::Attrib::CUSTOM_1, "fCubeScale" }, { geom::Attrib::CUSTOM_2, "vDeathPosition" }, { geom::Attrib::CUSTOM_3, "fSecondsSinceDeath" } });
+	mBatchDyingCubes = gl::Batch::create(meshDying, mGlslDyingCubes, { { geom::Attrib::CUSTOM_1, "fCubeScale" }, { geom::Attrib::CUSTOM_2, "vDeathPosition" } });
 
 	gl::enableDepthWrite();
 	gl::enableDepthRead();
@@ -192,13 +256,11 @@ void HP_WaitingRTApp::update()
 	mRgbBuffer = mDSAPI->getRgbFrame();
 
 	// update our instance positions; map our instance data VBO, write new positions, unmap
-	vec3 *positions = (vec3*)mInstanceDataVbo->mapWriteOnly(true);
+	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
 	float *scales = (float*)mInstanceScaleVbo->mapWriteOnly(true);
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
-	float *dyingTimes = (float*)mInstanceDyingTotalTimeVbo->mapWriteOnly(true);
 
 	numberToDraw = 0;
-	numberOfDyingToDraw = 0;
 
 	//Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
 
@@ -221,40 +283,15 @@ void HP_WaitingRTApp::update()
 
 				numberToDraw++;
 
-				if (mCurrentlyHasDeadInstance[potX + (potY * width)] == false)
-				{
-					mDeadParticleStartingPositions[potX + (potY * width)] = worldPos;
-				}
-
+				mPreviousValidDepthCoord[potX + (potY * width)] = worldPos;
 				mPreviouslyHadDepth[potX + (potY * width)] = true;
+
 			}
 			else //no depth here now, if there was depth, start dying.
 			{
-				if (mPreviouslyHadDepth[potX + (potY * width)]) //there was depth and it just died
+				if (mDyingParticleManager.CurrentTotalParticles < MaxNumberDyingParticleBufferSize && mPreviouslyHadDepth[potX + (potY * width)]) //there was depth and it just died
 				{
-					if (mCurrentlyHasDeadInstance[potX + (potY * width)])
-					{
-						*dyingTimes = elapsed - mTimeOfDeath[potX + (potY * width)];
-					}
-					else //new death
-					{
-						*dyingTimes = 0;
-						mTimeOfDeath[potX + (potY * width)] = elapsed;
-					}
-
-					if (*dyingTimes < MaxDeathTimeSeconds) //there's an old death here, and it's not too old, continue to add to draw batch.
-					{
-						*deathPositions++ = mDeadParticleStartingPositions[potX + (potY * width)];
-
-						*dyingTimes++;
-						numberOfDyingToDraw++;
-						mCurrentlyHasDeadInstance[potX + (potY * width)] = true;
-					}
-					else //too old
-					{
-						mCurrentlyHasDeadInstance[potX + (potY * width)] = false;
-					}
-
+					mDyingParticleManager.AddDyingParticle(ParticleInstance(mPreviousValidDepthCoord[potX + (potY * width)],/* vec2(potX, potY), */elapsed));
 				}
 
 				mPreviouslyHadDepth[potX + (potY * width)] = false;
@@ -262,12 +299,17 @@ void HP_WaitingRTApp::update()
 		}
 	}
 
-	console() << numberOfDyingToDraw << endl;
+	//cleanup any old particles before setting up the draw.
+	mDyingParticleManager.CleanupUpdate(elapsed);
+
+	//setup the gpu memory positions
+	mDyingParticleManager.SetupBatchDraw(deathPositions, elapsed);
+
+	//console() << mDyingParticleManager.CurrentTotalParticles << endl;
 	
-	mInstanceDataVbo->unmap();
+	mInstancePositionVbo->unmap();
 	mInstanceScaleVbo->unmap();
 	mInstanceDyingDataVbo->unmap();
-	mInstanceDyingTotalTimeVbo->unmap();
 }
 
 void HP_WaitingRTApp::draw()
@@ -288,7 +330,7 @@ void HP_WaitingRTApp::draw()
 	mGlslDyingCubes->bind();
 	mGlslDyingCubes->uniform("rotationMatrix", blah);
 
-	mBatchDyingCubes->drawInstanced(numberOfDyingToDraw);
+	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles); //
 	mBatch->drawInstanced(numberToDraw);
 
 	//console() << numberToDraw << endl;
