@@ -54,6 +54,26 @@ namespace CinderDS
 		return mIsInit;
 	}
 
+	bool CinderDSAPI::initForAlignment()
+	{
+		mDSAPI->accessThird()->enableThird(true);
+
+
+		mDSAPI->accessEmitter()->enableEmitter(true);
+
+
+		mDSAPI->enableLRCrop(true);
+		mDSAPI->enableLeft(false);
+		mDSAPI->enableRight(false);
+		mDSAPI->enableZ(true);
+
+
+		if (!mDSAPI->setLRZResolutionMode(true, 480, 360, 30, DS_LUMINANCE8)) return false;
+		if (!mDSAPI->accessThird()->setThirdResolutionMode(true, 640, 480, 30, DS_RGB8)) return false;
+
+		return true;
+	}
+
 	bool CinderDSAPI::initRgb(const FrameSize &pRes, const int &pFPS)
 	{
 		ivec2 cSize;
@@ -245,6 +265,11 @@ namespace CinderDS
 		float cFovX, cFovY;
 		DSFieldOfViewsFromIntrinsicsRect(mRgbIntrinsics, cFovX, cFovY);
 		return vec2(cFovX, cFovY);
+	}
+
+	DSAPIRef CinderDSAPI::getDSAPI()
+	{
+		return mDSAPI;
 	}
 
 	bool CinderDSAPI::open()

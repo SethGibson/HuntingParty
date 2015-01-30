@@ -4,12 +4,15 @@ uniform mat4	ciModelViewProjection;
 uniform mat3	ciNormalMatrix;
 uniform mat4	rotationMatrix;
 
+uniform float	MaxLifetime;
+
 in vec4		ciPosition;
 in vec2		ciTexCoord0;
 in vec3		ciNormal;
 in vec4		ciColor;
 in float	fCubeScale;
-in vec3		vDeathPosition; // per-instance position variable at time of death
+in vec3		vDeathInitialPosition; // per-instance position variable at time of death
+in float	fTotalLifetime;
 
 out vec3 Position; // In world space
 
@@ -65,8 +68,13 @@ vec3 HSLToRGB(vec3 hsl)
 
 void main( void )
 {
-	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * 2 * ciPosition)).xyz, ciPosition.w) + vec4( vDeathPosition, 0 ) );
-	Color 		=  vec4( HSLToRGB(vec3(0 + (1 - 0) * ((gl_Position.z - 500) / (2000 - 500)), 1.0, 0.5)), 1);
+	vec3 currentPosition = vec3(vDeathInitialPosition.x, vDeathInitialPosition.y + (-9.8f * fTotalLifetime * 10.0f), vDeathInitialPosition.z);
+	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * 2 * ciPosition)).xyz, ciPosition.w) + vec4( currentPosition, 0 ) );
+	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 500) / (2000 - 500));
+	Color 		=  vec4(
+						HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.5)),
+						1.0 - (fTotalLifetime / MaxLifetime)
+					   );
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }

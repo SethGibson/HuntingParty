@@ -41,6 +41,9 @@
     <ClInclude Include="..\..\Cinder-DSAPI\src\CiDSAPI.h">
       <Filter>Source Files\blocks\Cinder-DSAPI</Filter>
     </ClInclude>
+    <ClInclude Include="..\src\RGBD.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Resources.rc">
