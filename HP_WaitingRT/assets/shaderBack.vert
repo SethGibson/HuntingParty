@@ -18,7 +18,7 @@ out vec3		Normal;
 
 void main( void )
 {
-	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (1.0 * ciPosition)).xyz, ciPosition.w) + vec4( vInstancePosition, 0 ) );
+	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (1.5 * ciPosition)).xyz, ciPosition.w) + vec4( vInstancePosition, 0 ) );
 	Color 		= vec4(0, 1, 0, 1.0);//vec4(ciColor.xyz, 1.0);
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * -(rotationMatrix * vec4(0, 0, -1,0)).xyz;

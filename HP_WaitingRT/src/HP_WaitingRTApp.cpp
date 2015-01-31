@@ -44,9 +44,9 @@ public:
 	}
 };
 
-const static float Gravity = -9.8;
-const static int MaxNumberDyingParticleBufferSize = 75000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
-const static float DeathLifetimeInSeconds = 1.5;
+const static int MaxNumberDyingParticleBufferSize = 50000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
+const static float DeathLifetimeInSeconds = 1.5; //total time until dying particle instances expire
+const int desiredEdgeNumCap = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
 
 class DyingParticlesManager
 {
@@ -61,37 +61,11 @@ private:
 		BatchCreationTime.pop_front();
 	}
 
-	vec3 ParticlePositionWithGravityOffset(ParticleInstance particle, float totalLivingTime, float gravity = Gravity)
-	{
-		return vec3(particle.InitialPosition.x, particle.InitialPosition.y + (gravity * totalLivingTime) * 10, particle.InitialPosition.z);
-	}
-
-	float ParticleOpacity(ParticleInstance particle, float totalLivingTime)
-	{
-		return 1.0 - (totalLivingTime / DeathLifetimeInSeconds);
-	}
-
 public:
 	std::deque<std::vector<ParticleInstance>> mDyingParticleBatches;
 	std::deque<float> BatchCreationTime;
 
 	int CurrentTotalParticles = 0;
-
-	DyingParticlesManager()
-	{
-
-	}
-
-	int ManualCount()
-	{
-		int count = 0;
-		for (int i = 0; i < mDyingParticleBatches.size(); i++)
-		{
-			count += mDyingParticleBatches[i].size();
-		}
-
-		return (count);
-	}
 
 	void AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
 	{
@@ -171,7 +145,7 @@ public:
 	//uint16_t* zAligned;
 
 	int lowThreshold = 4;	// low = 4; high = 6 gives proper outlines
-	int highThreshold = 6;	// low = 4; high = 5 gives a sweet interior outliney effect
+	int highThreshold = 6;	// low = 4; high = 5 gives a sweet interior outliney effect, and fixes the back-estimation
 
 	std::vector<int> mHogCounts;
 	std::vector<long> mHogTotals;
@@ -430,7 +404,6 @@ void HP_WaitingRTApp::update()
 	}
 	
 	typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
-	const int desiredEdgeNumCap = 150;
 	EdgeCloud<int> edgeCloud;
 	if (validEdges.size() <= desiredEdgeNumCap)
 	{
@@ -447,71 +420,6 @@ void HP_WaitingRTApp::update()
 	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
 	
 	index.buildIndex();
-
-		////Histogram of gradients?
-		//std::fill(mHogCounts.begin(), mHogCounts.end(), 0); //reset all counts to zero
-		//std::fill(mHogTotals.begin(), mHogTotals.end(), 0); //reset all totals to zero
-
-		//for (int y = 0; y < height; y++)
-		//{
-		//	for (int x = 0; x < width; x++)
-		//	{
-		//		if (output.getMat().data[x + (y * width)] != 0)
-		//		{
-		//			int originalDepth = originalDepthBuffer[x + (y * width)];
-		//			if (originalDepth != 0)
-		//			{
-		//				int rem = originalDepth % HogBinStep;
-		//				//round up to farther bin
-		//				originalDepth += HogBinStep - rem;
-
-		//				//normalized to be in the 10's, now turn into an index
-		//				originalDepth -= HogStartDepth; //start depth should be first index
-		//				originalDepth /= HogBinStep; //normalized to an index
-
-		//				if (originalDepth >= 0 && originalDepth && originalDepth < mHogCounts.size())
-		//				{
-		//					mHogTotals[originalDepth] += originalDepthBuffer[x + (y * width)];
-		//					mHogCounts[originalDepth]++;
-		//				}
-		//			}
-		//		}
-		//	}
-		//}
-
-		//int highestCount = 0;
-		//int highestCountIndex = 0;
-		//for (int i = 0; i < mHogCounts.size(); i++)
-		//{
-		//	if (mHogCounts[i] > highestCount)
-		//	{
-		//		highestCount = mHogCounts[i];
-		//		highestCountIndex = i;
-		//	}
-		//}
-
-		//if (highestCount < 75) //min threshold for counting as needing a back plane
-		//{
-		//	mBackDepthPlaneZ = 0;
-		//}
-		//else
-		//{
-		//	float desiredBackPlaneZ = ((float)mHogTotals[highestCountIndex] / (float)highestCount); //get the average actual Z value of all those edges in the best bin.
-
-		//	if (mBackDepthPlaneZ != 0)
-		//	{ //lerp into place
-		//		float lerpRate = 0.3;
-		//		if (mBackDepthPlaneZ < desiredBackPlaneZ)
-		//			lerpRate = 0.6; //if it's trying to go farther back, lerp in faster
-
-		//		mBackDepthPlaneZ += (desiredBackPlaneZ - mBackDepthPlaneZ) * lerpRate;
-		//	}
-		//	else //snap into place
-		//	{
-		//		mBackDepthPlaneZ = desiredBackPlaneZ;
-		//	}
-		//	console() << mBackDepthPlaneZ << endl;
-		//}
 	
 					/*
 					Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
@@ -535,6 +443,7 @@ void HP_WaitingRTApp::update()
 				//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
 				//depth = remapZ;										//
 				*/
+	bool kdIndexReady = index.size() > 0;
 
 	for (int potX = 0; potX < width; ++potX)
 	{
@@ -561,13 +470,11 @@ void HP_WaitingRTApp::update()
 				mPreviousValidDepthCoord[potX + (potY * width)] = worldPos;
 				mPreviouslyHadDepth[potX + (potY * width)] = true;
 
-				//if (mBackDepthPlaneZ > 0 && mCam.getFarClip() > v)
-				//{ //BACK FILLERS
-				//	*backPositions++ = vec3(worldPos.x, worldPos.y, mBackDepthPlaneZ);
-				//	backNumberToDraw++;
-				//}
-				if (index.size() > 0)
+				if (kdIndexReady)
 				{
+					const float mirrorDepthLerpPastPercentage = 0.25; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
+					const float silhouetteZOffset = 3.0f; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
+
 					const int query_pt[2] = { potX, potY };
 					const size_t num_results = 1;
 					std::vector<size_t>   ret_index(num_results);
@@ -575,12 +482,24 @@ void HP_WaitingRTApp::update()
 					index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
 					float axisZ = originalDepthBuffer[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * width];
 					float zDiff = math<float>::abs(axisZ - v);
-					float newZ = v;
-					//if (zDiff > 0) //axisZ is behind our depth point.
-					{
-						const float mirrorDepthLerpPastPercentage = 0.25;
-						newZ = v + zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
-					}
+					//float newZ = v + zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
+
+					//float newZ = v + silhouetteZOffset + ((zDiff + (zDiff * mirrorDepthLerpPastPercentage)) * (math<float>::clamp(lmap<float>(out_dist_sqr[0], 0, 1000, 0.3, 1), 0.3, 1)));
+					/* ^ ^ ^																^ ^ ^ ^ <- this lmap&clamp simply make depth pixels close to their edge use less of the z addition (smoothing out where it meets the silhouette)
+						Variables at your disposal:
+							- z-value of nearest edge pixel
+							- distance of this pixel from nearest edge pixel
+						With this you can:
+							- lerp in how much of the additional depth to use based on distance from the edge
+							- check if the edge for this pixel is actually behind. If it isn't, you could skip the math::abs() and simply not add the instance.
+
+						Next steps???: 
+							- somehow normalize the different edge z's closer to each other, i.e. if sorted and within a threshold to the ones next to it, kind of lerp them toward each other...
+								- without doing this, we have the shattered glass back effect, which may be fine.
+							NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
+					*/
+					float newZ = v + silhouetteZOffset + (zDiff * mirrorDepthLerpPastPercentage) + (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 200), 0, 200));
+
 					*backPositions++ = vec3(worldPos.x, worldPos.y, newZ);
 					backNumberToDraw++;
 				}
