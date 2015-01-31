@@ -473,7 +473,7 @@ void HP_WaitingRTApp::update()
 				if (cannyEdgePixel)
 					*scales++ = 1.5f;
 				else
-					*scales++ = 1.0f;//0.3f;
+					*scales++ = 2.0f;//0.3f;
 
 				numberToDraw++;
 
@@ -482,8 +482,8 @@ void HP_WaitingRTApp::update()
 
 				if (kdIndexReady)
 				{
-					const float mirrorDepthLerpPastPercentage = 0.25; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
-					const float silhouetteZOffset = 3.0f; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
+					const float mirrorDepthLerpPastPercentage = 0.8; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
+					const float silhouetteZOffset = 150; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
 
 					const int query_pt[2] = { potX, potY };
 					const size_t num_results = 1;
@@ -492,9 +492,9 @@ void HP_WaitingRTApp::update()
 					index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
 					float axisZ = originalDepthBuffer[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * width];
 					float zDiff = math<float>::abs(axisZ - v);
-					//float newZ = v + zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
+					//float additionalZ = zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
 
-					//float newZ = v + silhouetteZOffset + ((zDiff + (zDiff * mirrorDepthLerpPastPercentage)) * (math<float>::clamp(lmap<float>(out_dist_sqr[0], 0, 1000, 0.3, 1), 0.3, 1)));
+					//float additionalZ = silhouetteZOffset + ((zDiff + (zDiff * mirrorDepthLerpPastPercentage)) * (math<float>::clamp(lmap<float>(out_dist_sqr[0], 0, 1000, 0.3, 1), 0.3, 1)));
 					/* ^ ^ ^																^ ^ ^ ^ <- this lmap&clamp simply make depth pixels close to their edge use less of the z addition (smoothing out where it meets the silhouette)
 						Variables at your disposal:
 							- z-value of nearest edge pixel
@@ -508,11 +508,13 @@ void HP_WaitingRTApp::update()
 								- without doing this, we have the shattered glass back effect, which may be fine.
 							NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
 					*/
-					float additionalZ = silhouetteZOffset + (zDiff * mirrorDepthLerpPastPercentage) + (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 200), 0, 200));
+					float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
+					float s = math<float>::sin(lerpPercent);
+					float additionalZ = silhouetteZOffset * (s * s);/* + (zDiff * mirrorDepthLerpPastPercentage) * lerpPercent*/;
 
-					*backPositions++ = vec3(worldPos.x, worldPos.y, v + (additionalZ * randFloat()));
+					*backPositions++ = vec3(worldPos.x, worldPos.y, v + (additionalZ * 1));
 
-					*fillerScales++ = randFloat() * 2;
+					*fillerScales++ = 2;
 
 					backNumberToDraw++;
 				}
@@ -572,7 +574,7 @@ void HP_WaitingRTApp::draw()
 	mGlslDyingCubes->uniform("MaxLifetime", DeathLifetimeInSeconds);
 
 	mBatchBackubes->drawInstanced(backNumberToDraw);
-	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
+	//mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
 	mBatch->drawInstanced(numberToDraw);
 
 	//console() << numberToDraw << endl;
