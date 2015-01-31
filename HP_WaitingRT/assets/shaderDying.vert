@@ -69,7 +69,7 @@ vec3 HSLToRGB(vec3 hsl)
 void main( void )
 {
 	vec3 currentPosition = vec3(vDeathInitialPosition.x, vDeathInitialPosition.y + (-9.8f * fTotalLifetime * 10.0f), vDeathInitialPosition.z);
-	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * 2 * ciPosition)).xyz, ciPosition.w) + vec4( currentPosition, 0 ) );
+	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * ((1.0 - (fTotalLifetime / MaxLifetime) * fCubeScale) * 2 * ciPosition)).xyz, ciPosition.w) + vec4( currentPosition, 0 ) );
 	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 500) / (2000 - 500));
 	Color 		=  vec4(
 						HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.5)),

@@ -22,6 +22,7 @@
 #include <deque>
 #include "depth_filter.h"
 #include "RGBD.h"
+#include "nanoflann.hpp"
 
 
 using namespace ci;
@@ -329,6 +330,39 @@ void HP_WaitingRTApp::resize()
 	gl::setMatrices(mCam);
 }
 
+template <typename T>
+struct EdgeCloud
+{
+	std::vector<ivec2>  edges;
+
+	// Must return the number of data points
+	inline size_t kdtree_get_point_count() const { return edges.size(); }
+
+	// Returns the distance between the vector "p1[0:size-1]" and the data point with index "idx_p2" stored in the class:
+	inline T kdtree_distance(const T *p1, const size_t idx_p2, size_t /*size*/) const
+	{
+		const T d0 = p1[0] - edges[idx_p2].x;
+		const T d1 = p1[1] - edges[idx_p2].y;
+		return d0*d0 + d1*d1;
+	}
+
+	// Returns the dim'th component of the idx'th point in the class:
+	// Since this is inlined and the "dim" argument is typically an immediate value, the
+	//  "if/else's" are actually solved at compile time.
+	inline T kdtree_get_pt(const size_t idx, int dim) const
+	{
+		if (dim == 0) return edges[idx].x;
+		else return edges[idx].y;
+	}
+
+	// Optional bounding-box computation: return false to default to a standard bbox computation loop.
+	//   Return true if the BBOX was already computed by the class and returned in "bb" so it can be avoided to redo it again.
+	//   Look at bb.size() to find out the expected dimensionality (e.g. 2 or 3 for point clouds)
+	template <class BBOX>
+	bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
+
+};
+
 void HP_WaitingRTApp::update()
 {
 
@@ -355,9 +389,9 @@ void HP_WaitingRTApp::update()
 
 	numberToDraw = 0;
 	backNumberToDraw = 0;
-	
 
-	
+
+
 	uint16_t* originalDepthBuffer = mDepthBuffer.getDataStore().get();
 	Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
 	Mat depthf(Size(width, height), CV_8UC1);
@@ -370,71 +404,114 @@ void HP_WaitingRTApp::update()
 	output.create(Size(width, height), CV_8UC1);
 	cv::Canny(input, output, lowThreshold, highThreshold);
 
+	//kd-tree of canny edges to proper depth values for all the valid depth pixels later
 
-	//Histogram of gradients?
-	std::fill(mHogCounts.begin(), mHogCounts.end(), 0); //reset all counts to zero
-	std::fill(mHogTotals.begin(), mHogTotals.end(), 0); //reset all totals to zero
-
+	std::vector<ivec2> validEdges;
 	for (int y = 0; y < height; y++)
 	{
 		for (int x = 0; x < width; x++)
 		{
-			if (output.getMat().data[x + (y * width)] != 0)
+			uint16_t originalDepth = originalDepthBuffer[x + (y * width)];
+
+			if (output.getMat().data[x + y * width] != 0 && //isn't zero (therefore 255, aka an edge)
+				originalDepth != 0 && //is valid depth point
+				originalDepth < mCam.getFarClip()) //isn't clipped by clip plane
 			{
-				int originalDepth = originalDepthBuffer[x + (y * width)];
-				if (originalDepth != 0)
-				{
-					int rem = originalDepth % HogBinStep;
-					//round up to farther bin
-					originalDepth += HogBinStep - rem;
+				////valid edge & depth, now check if we're being redundant
 
-					//normalized to be in the 10's, now turn into an index
-					originalDepth -= HogStartDepth; //start depth should be first index
-					originalDepth /= HogBinStep; //normalized to an index
+				//int rem = originalDepth % HogBinStep;
+				////round up to farther bin
+				//originalDepth += HogBinStep - rem;
 
-					if (originalDepth >= 0 && originalDepth && originalDepth < mHogCounts.size())
-					{
-						mHogTotals[originalDepth] += originalDepthBuffer[x + (y * width)];
-						mHogCounts[originalDepth]++;
-					}
-				}
+
+				validEdges.push_back(ivec2(x, y));
 			}
 		}
 	}
-
-	int highestCount = 0;
-	int highestCountIndex = 0;
-	for (int i = 0; i < mHogCounts.size(); i++)
+	
+	typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
+	const int desiredEdgeNumCap = 150;
+	EdgeCloud<int> edgeCloud;
+	if (validEdges.size() <= desiredEdgeNumCap)
 	{
-		if (mHogCounts[i] > highestCount)
+		edgeCloud.edges = validEdges;
+	}
+	else //decimate to desired number of edges
+	{
+		for (int i = 0; i < validEdges.size(); i += validEdges.size() / desiredEdgeNumCap)
 		{
-			highestCount = mHogCounts[i];
-			highestCountIndex = i;
+			edgeCloud.edges.push_back(validEdges[i]);
 		}
 	}
 
-	if (highestCount < 75) //min threshold for counting as needing a back plane
-	{
-		mBackDepthPlaneZ = 0;
-	}
-	else
-	{
-		float desiredBackPlaneZ = ((float)mHogTotals[highestCountIndex] / (float)highestCount); //get the average actual Z value of all those edges in the best bin.
+	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+	
+	index.buildIndex();
 
-		if (mBackDepthPlaneZ != 0)
-		{ //lerp into place
-			float lerpRate = 0.3;
-			if (mBackDepthPlaneZ < desiredBackPlaneZ)
-				lerpRate = 0.6; //if it's trying to go farther back, lerp in faster
+		////Histogram of gradients?
+		//std::fill(mHogCounts.begin(), mHogCounts.end(), 0); //reset all counts to zero
+		//std::fill(mHogTotals.begin(), mHogTotals.end(), 0); //reset all totals to zero
 
-			mBackDepthPlaneZ += (desiredBackPlaneZ - mBackDepthPlaneZ) * lerpRate;
-		}
-		else //snap into place
-		{
-			mBackDepthPlaneZ = desiredBackPlaneZ;
-		}
-		console() << mBackDepthPlaneZ << endl;
-	}
+		//for (int y = 0; y < height; y++)
+		//{
+		//	for (int x = 0; x < width; x++)
+		//	{
+		//		if (output.getMat().data[x + (y * width)] != 0)
+		//		{
+		//			int originalDepth = originalDepthBuffer[x + (y * width)];
+		//			if (originalDepth != 0)
+		//			{
+		//				int rem = originalDepth % HogBinStep;
+		//				//round up to farther bin
+		//				originalDepth += HogBinStep - rem;
+
+		//				//normalized to be in the 10's, now turn into an index
+		//				originalDepth -= HogStartDepth; //start depth should be first index
+		//				originalDepth /= HogBinStep; //normalized to an index
+
+		//				if (originalDepth >= 0 && originalDepth && originalDepth < mHogCounts.size())
+		//				{
+		//					mHogTotals[originalDepth] += originalDepthBuffer[x + (y * width)];
+		//					mHogCounts[originalDepth]++;
+		//				}
+		//			}
+		//		}
+		//	}
+		//}
+
+		//int highestCount = 0;
+		//int highestCountIndex = 0;
+		//for (int i = 0; i < mHogCounts.size(); i++)
+		//{
+		//	if (mHogCounts[i] > highestCount)
+		//	{
+		//		highestCount = mHogCounts[i];
+		//		highestCountIndex = i;
+		//	}
+		//}
+
+		//if (highestCount < 75) //min threshold for counting as needing a back plane
+		//{
+		//	mBackDepthPlaneZ = 0;
+		//}
+		//else
+		//{
+		//	float desiredBackPlaneZ = ((float)mHogTotals[highestCountIndex] / (float)highestCount); //get the average actual Z value of all those edges in the best bin.
+
+		//	if (mBackDepthPlaneZ != 0)
+		//	{ //lerp into place
+		//		float lerpRate = 0.3;
+		//		if (mBackDepthPlaneZ < desiredBackPlaneZ)
+		//			lerpRate = 0.6; //if it's trying to go farther back, lerp in faster
+
+		//		mBackDepthPlaneZ += (desiredBackPlaneZ - mBackDepthPlaneZ) * lerpRate;
+		//	}
+		//	else //snap into place
+		//	{
+		//		mBackDepthPlaneZ = desiredBackPlaneZ;
+		//	}
+		//	console() << mBackDepthPlaneZ << endl;
+		//}
 	
 					/*
 					Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
@@ -477,16 +554,34 @@ void HP_WaitingRTApp::update()
 				if (cannyEdgePixel)
 					*scales++ = 1.5f;
 				else
-					*scales++ = 0.3f;
+					*scales++ = 1.0f;//0.3f;
 
 				numberToDraw++;
 
 				mPreviousValidDepthCoord[potX + (potY * width)] = worldPos;
 				mPreviouslyHadDepth[potX + (potY * width)] = true;
 
-				if (mBackDepthPlaneZ > 0 && mCam.getFarClip() > v)
-				{ //BACK FILLERS
-					*backPositions++ = vec3(worldPos.x, worldPos.y, mBackDepthPlaneZ);
+				//if (mBackDepthPlaneZ > 0 && mCam.getFarClip() > v)
+				//{ //BACK FILLERS
+				//	*backPositions++ = vec3(worldPos.x, worldPos.y, mBackDepthPlaneZ);
+				//	backNumberToDraw++;
+				//}
+				if (index.size() > 0)
+				{
+					const int query_pt[2] = { potX, potY };
+					const size_t num_results = 1;
+					std::vector<size_t>   ret_index(num_results);
+					std::vector<int> out_dist_sqr(num_results);
+					index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
+					float axisZ = originalDepthBuffer[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * width];
+					float zDiff = math<float>::abs(axisZ - v);
+					float newZ = v;
+					//if (zDiff > 0) //axisZ is behind our depth point.
+					{
+						const float mirrorDepthLerpPastPercentage = 0.25;
+						newZ = v + zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
+					}
+					*backPositions++ = vec3(worldPos.x, worldPos.y, newZ);
 					backNumberToDraw++;
 				}
 			}
