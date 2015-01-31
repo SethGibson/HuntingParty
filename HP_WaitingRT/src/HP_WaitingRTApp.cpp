@@ -122,6 +122,7 @@ public:
 	gl::VboRef			mInstanceScaleVbo;
 	gl::VboRef			mInstanceDyingDataVbo;
 	gl::VboRef			mInstanceDyingTotalLifetimesVbo;
+	gl::VboRef			mInstanceFillerScaleVbo;
 
 	gl::BatchRef		mBatchBackubes;
 	gl::GlslProgRef		mGlslBackCubes;
@@ -213,6 +214,7 @@ void HP_WaitingRTApp::setup()
 	std::vector<vec3> positions;
 	std::vector<vec3> backPositions;
 	std::vector<float> cubeScales;
+	std::vector<float> fillerScales;
 	std::vector<vec3> deathPositions = std::vector<vec3>(MaxNumberDyingParticleBufferSize);
 	std::vector<float> deathTotalLifetimes = std::vector<float>(MaxNumberDyingParticleBufferSize);
 	for (size_t potX = 0; potX < width; ++potX) {
@@ -224,6 +226,7 @@ void HP_WaitingRTApp::setup()
 			backPositions.push_back(pos);
 
 			cubeScales.push_back(randFloat(0.2, 5));
+			fillerScales.push_back(randFloat(0.2, 5));
 
 			mPreviouslyHadDepth.push_back(false);
 			//mCurrentlyHasDeadInstance.push_back(false);
@@ -243,6 +246,7 @@ void HP_WaitingRTApp::setup()
 	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize) * sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
+	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
 
 	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
 	geom::BufferLayout instanceDataLayout;
@@ -274,9 +278,14 @@ void HP_WaitingRTApp::setup()
 
 	geom::BufferLayout instanceBackDataLayout;
 	instanceBackDataLayout.append(geom::Attrib::CUSTOM_0, 3, 0, 0, 1 /* per instance */);
-	meshBack->appendVbo(instanceBackDataLayout, mInstanceBackPositionVbo);
 
-	mBatchBackubes = gl::Batch::create(meshBack, mGlslBackCubes, { { geom::Attrib::CUSTOM_0, "vInstancePosition" } });
+	geom::BufferLayout instanceFillerScaleLayout;
+	instanceFillerScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
+
+	meshBack->appendVbo(instanceBackDataLayout, mInstanceBackPositionVbo);
+	meshBack->appendVbo(instanceFillerScaleLayout, mInstanceFillerScaleVbo);
+
+	mBatchBackubes = gl::Batch::create(meshBack, mGlslBackCubes, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
 
 
 	gl::enableDepthWrite();
@@ -356,6 +365,7 @@ void HP_WaitingRTApp::update()
 	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
 	vec3 *backPositions = (vec3*)mInstanceBackPositionVbo->mapWriteOnly(true);
 	float *scales = (float*)mInstanceScaleVbo->mapWriteOnly(true);
+	float *fillerScales = (float*)mInstanceFillerScaleVbo->mapWriteOnly(true);
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
 	float *totalLivingTimes = (float*)mInstanceDyingTotalLifetimesVbo->mapWriteOnly(true);
 
@@ -498,9 +508,12 @@ void HP_WaitingRTApp::update()
 								- without doing this, we have the shattered glass back effect, which may be fine.
 							NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
 					*/
-					float newZ = v + silhouetteZOffset + (zDiff * mirrorDepthLerpPastPercentage) + (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 200), 0, 200));
+					float additionalZ = silhouetteZOffset + (zDiff * mirrorDepthLerpPastPercentage) + (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 200), 0, 200));
 
-					*backPositions++ = vec3(worldPos.x, worldPos.y, newZ);
+					*backPositions++ = vec3(worldPos.x, worldPos.y, v + (additionalZ * randFloat()));
+
+					*fillerScales++ = randFloat() * 2;
+
 					backNumberToDraw++;
 				}
 			}
@@ -531,6 +544,7 @@ void HP_WaitingRTApp::update()
 	mInstanceDyingDataVbo->unmap();
 	mInstanceDyingTotalLifetimesVbo->unmap();
 	mInstanceBackPositionVbo->unmap();
+	mInstanceFillerScaleVbo->unmap();
 }
 
 void HP_WaitingRTApp::draw()
