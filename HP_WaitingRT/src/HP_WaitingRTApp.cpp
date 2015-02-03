@@ -46,7 +46,10 @@ public:
 
 const static int MaxNumberDyingParticleBufferSize = 50000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
 const static float DeathLifetimeInSeconds = 1.5; //total time until dying particle instances expire
-const int desiredEdgeNumCap = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
+const static int SecondsBetweenNewSpawns = 0.5;
+const static int DepthSubsampleWindowSize = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
+const static int VariableCap = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
+const static int DesiredEdgeNumCap = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
 
 class DyingParticlesManager
 {
@@ -112,6 +115,10 @@ public:
 	void mouseDown(MouseEvent event) override;
 	void mouseDrag(MouseEvent event) override;
 
+	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed);
+	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
+	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
+
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
 	gl::BatchRef		mBatchDyingCubes;
@@ -154,6 +161,10 @@ public:
 	const int HogBinStep = 30;
 	const int NumberOfDepthSteps = 50; //only go (30 * 50) = 1500 pixels in from StartDepth
 	float mBackDepthPlaneZ = 0;
+
+	float TimeOfLastInstanceBatchSpawn = -10;
+
+	int mDepthSubsampleSize;
 };
 
 int width;
@@ -168,6 +179,8 @@ const float MaxDeathTimeSeconds = 5;
 
 void HP_WaitingRTApp::setup()
 {
+	mDepthSubsampleSize = DepthSubsampleWindowSize;
+
 	//out = std::ofstream("output.txt");
 
 
@@ -192,7 +205,7 @@ void HP_WaitingRTApp::setup()
 
 	//mCam.lookAt(vec3(0, CAMERA_Y_RANGE.first, 0), vec3(0));
 	vec2 cFOVs = mDSAPI->getDepthFOVs();
-	mCam.setPerspective(cFOVs.y, getWindowAspectRatio(), 100, 5000);
+	mCam.setPerspective(cFOVs.y, getWindowAspectRatio(), 100, 2500);
 	mCam.lookAt(vec3(0, 0, 0), vec3(0, 0, 1000), vec3(0, -1, 0));
 
 	mMayaCam = MayaCamUI(mCam);
@@ -306,7 +319,7 @@ void HP_WaitingRTApp::shutdown()
 void HP_WaitingRTApp::resize()
 {
 	// now tell our Camera that the window aspect ratio has changed
-	mCam.setPerspective(60, getWindowAspectRatio(), 1, 1000);
+	mCam.setPerspective(60, getWindowAspectRatio(), 100, 2500);
 	mMayaCam.setCurrentCam(mCam);
 
 	// and in turn, let OpenGL know we have a new camera
@@ -369,12 +382,76 @@ void HP_WaitingRTApp::update()
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
 	float *totalLivingTimes = (float*)mInstanceDyingTotalLifetimesVbo->mapWriteOnly(true);
 
-	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
-
 	numberToDraw = 0;
 	backNumberToDraw = 0;
 
 
+	/*
+		just in place to test different things right now.
+	*/
+	if (false)
+	{
+		//Given mapped buffers, set up all the particles for drawing.
+		SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
+	}
+	else
+	{
+		//subsampled depth particles:::
+
+		std::vector<uint16_t> subsampledDepths = GetSuperPixelAverageDepths(mDepthBuffer.getDataStore().get(), width, height, mDepthSubsampleSize);
+		int subsampledWidth = width / mDepthSubsampleSize;
+		int subsampledHeight = height / mDepthSubsampleSize;
+
+
+		//Mat depth = Mat(Size(width, height), CV_16UC1, subsampledDepths.data());//.getIter();
+		//Mat depthf(Size(width, height), CV_8UC1);
+		//depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
+
+		////uint16_t* depth = mDepthBuffer.getDataStore().get();
+		////uint8_t* rgb = mRgbBuffer.getDataStore().get();
+		//InputArray input = InputArray(depthf);
+		//OutputArray output = OutputArray(depthf);
+		//output.create(Size(width, height), CV_8UC1);
+		//cv::erode(input, output, InputArray(Mat(Size(3, 3, CV_8UC1))));
+
+
+		for (int y = 0; y < subsampledHeight; y++)
+		{
+			for (int x = 0; x < subsampledWidth; x++)
+			{
+				float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
+
+				if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
+				{
+					vec3 subsampledDepthPoint = vec3(
+						((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+						((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+						subsampledAverageDepth);							
+
+					vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+
+					*positions++ = worldPos;
+					*scales++ = (float)mDepthSubsampleSize / 2;// 1.0f;
+
+					numberToDraw++;
+				}
+			}
+		}
+	}
+	
+
+	mInstancePositionVbo->unmap();
+	mInstanceScaleVbo->unmap();
+	mInstanceDyingDataVbo->unmap();
+	mInstanceDyingTotalLifetimesVbo->unmap();
+	mInstanceBackPositionVbo->unmap();
+	mInstanceFillerScaleVbo->unmap();
+}
+
+//Given mapped buffers, set up all the particles for drawing.
+void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed)
+{
+	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
 
 	uint16_t* originalDepthBuffer = mDepthBuffer.getDataStore().get();
 	Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
@@ -412,47 +489,47 @@ void HP_WaitingRTApp::update()
 			}
 		}
 	}
-	
+
 	typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
 	EdgeCloud<int> edgeCloud;
-	if (validEdges.size() <= desiredEdgeNumCap)
+	if (validEdges.size() <= DesiredEdgeNumCap)
 	{
 		edgeCloud.edges = validEdges;
 	}
 	else //decimate to desired number of edges
 	{
-		for (int i = 0; i < validEdges.size(); i += validEdges.size() / desiredEdgeNumCap)
+		for (int i = 0; i < validEdges.size(); i += validEdges.size() / DesiredEdgeNumCap)
 		{
 			edgeCloud.edges.push_back(validEdges[i]);
 		}
 	}
 
 	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
-	
+
 	index.buildIndex();
-	
-					/*
-					Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
 
-					//uint16_t* depth = mDepthBuffer.getDataStore().get();
-					//uint8_t* rgb = mRgbBuffer.getDataStore().get();
-					InputArray input = InputArray(depth);
-					OutputArray output = OutputArray(depth);
-					output.create(Size(width, height), CV_16U);
-					cv::Canny(input, output, 1, 3);
-					*/
+	/*
+	Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
 
-				/* //LEO DEPTH FILTER (not working, because stuff is setup wrong?)
-				uint16_t* depth = mDepthBuffer.getDataStore().get();
-				uint8_t* rgb = mRgbBuffer.getDataStore().get();
-				RGBD remapper(mDSAPI->getDSAPI().get());
-				remapper.getRGBAlignedZ(mDSAPI->getDSAPI()->getZImage(), zAligned);
+	//uint16_t* depth = mDepthBuffer.getDataStore().get();
+	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
+	InputArray input = InputArray(depth);
+	OutputArray output = OutputArray(depth);
+	output.create(Size(width, height), CV_16U);
+	cv::Canny(input, output, 1, 3);
+	*/
 
-				depthf_Filter(mDepthFilter, zAligned, rgb, depth);
+	/* //LEO DEPTH FILTER (not working, because stuff is setup wrong?)
+	uint16_t* depth = mDepthBuffer.getDataStore().get();
+	uint8_t* rgb = mRgbBuffer.getDataStore().get();
+	RGBD remapper(mDSAPI->getDSAPI().get());
+	remapper.getRGBAlignedZ(mDSAPI->getDSAPI()->getZImage(), zAligned);
 
-				//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
-				//depth = remapZ;										//
-				*/
+	depthf_Filter(mDepthFilter, zAligned, rgb, depth);
+
+	//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
+	//depth = remapZ;										//
+	*/
 	bool kdIndexReady = index.size() > 0;
 
 	for (int potX = 0; potX < width; ++potX)
@@ -496,17 +573,17 @@ void HP_WaitingRTApp::update()
 
 					//float additionalZ = silhouetteZOffset + ((zDiff + (zDiff * mirrorDepthLerpPastPercentage)) * (math<float>::clamp(lmap<float>(out_dist_sqr[0], 0, 1000, 0.3, 1), 0.3, 1)));
 					/* ^ ^ ^																^ ^ ^ ^ <- this lmap&clamp simply make depth pixels close to their edge use less of the z addition (smoothing out where it meets the silhouette)
-						Variables at your disposal:
-							- z-value of nearest edge pixel
-							- distance of this pixel from nearest edge pixel
-						With this you can:
-							- lerp in how much of the additional depth to use based on distance from the edge
-							- check if the edge for this pixel is actually behind. If it isn't, you could skip the math::abs() and simply not add the instance.
+					Variables at your disposal:
+					- z-value of nearest edge pixel
+					- distance of this pixel from nearest edge pixel
+					With this you can:
+					- lerp in how much of the additional depth to use based on distance from the edge
+					- check if the edge for this pixel is actually behind. If it isn't, you could skip the math::abs() and simply not add the instance.
 
-						Next steps???: 
-							- somehow normalize the different edge z's closer to each other, i.e. if sorted and within a threshold to the ones next to it, kind of lerp them toward each other...
-								- without doing this, we have the shattered glass back effect, which may be fine.
-							NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
+					Next steps???:
+					- somehow normalize the different edge z's closer to each other, i.e. if sorted and within a threshold to the ones next to it, kind of lerp them toward each other...
+					- without doing this, we have the shattered glass back effect, which may be fine.
+					NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
 					*/
 					float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
 					float s = math<float>::sin(lerpPercent);
@@ -532,21 +609,12 @@ void HP_WaitingRTApp::update()
 			}
 		}
 	}
-	
+
 	if (dyingParticlesToAdd.size() > 0)
 		mDyingParticleManager.AddDyingParticleBatch(dyingParticlesToAdd, elapsed);
 
 	//setup the gpu memory positions
 	mDyingParticleManager.SetupBatchDraw(deathPositions, totalLivingTimes, elapsed);
-
-	//console() << mDyingParticleManager.CurrentTotalParticles << endl;
-	
-	mInstancePositionVbo->unmap();
-	mInstanceScaleVbo->unmap();
-	mInstanceDyingDataVbo->unmap();
-	mInstanceDyingTotalLifetimesVbo->unmap();
-	mInstanceBackPositionVbo->unmap();
-	mInstanceFillerScaleVbo->unmap();
 }
 
 void HP_WaitingRTApp::draw()
@@ -594,6 +662,17 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 	else if (event.getChar() == 'w'){
 		highThreshold -= 1;
 	}
+	else if (event.getChar() == '3'){
+		do {
+			mDepthSubsampleSize = math<int>::min(8, mDepthSubsampleSize + 1); //MAX OUT AT 12x12 window size
+		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
+	}
+	else if (event.getChar() == 'e'){
+		do {
+			mDepthSubsampleSize = math<int>::max(1, mDepthSubsampleSize - 1);
+		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
+	}
+
 }
 
 void HP_WaitingRTApp::mouseDown(MouseEvent event)
@@ -610,6 +689,82 @@ void HP_WaitingRTApp::mouseDrag(MouseEvent event)
 	}
 	mMayaCam.mouseDrag(pos, event.isLeftDown(), event.isMiddleDown(), event.isRightDown());
 }
+
+std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize)
+{
+	const int orthant_width = subsampleWindowSize;
+	const int orthant_height = subsampleWindowSize;
+	
+	std::vector<uint16_t> averages(width / subsampleWindowSize * height / subsampleWindowSize);
+
+	for (int row = 0; row < height; row += orthant_height)
+	{
+		for (int col = 0; col < width; col += orthant_width)
+		{
+			int topLeftX = col - col % orthant_width;
+			int topLeftY = row - row % orthant_height;
+
+			//int total = 0, totalSq = 0;
+
+			//int numDepthPointsUsed = 0;
+			std::list<uint16_t> windowPixels;
+			uint32_t sum = 0;
+			for (int y = topLeftY; y < topLeftY + orthant_height; y++)
+			{ //every row in orthant
+				for (int x = topLeftX; x < topLeftX + orthant_width; x++)
+				{ //every column in row
+
+					/*
+					DO WHATEVER YOU WANT HERE FOR EVERY PIXEL IN THE ORTHANT --------
+					For the sake of example, we're just adding every pixel to the "averages" array, and then at the
+					end of the x/y loop (when the orthant is fully looped thru), we divide the sum by the total # of pixels.
+
+					You could even create an array analogous to the averages array, where you assign each pixel in the image
+					a "window" to perform operations on if you so desire. i.e. pixel 1,1 (from the top left) could have a 3x3
+					window of:
+					0,1,2,...
+					0,1,2,... (all multiplied by 1 * image width, since it's a 1D depth array)
+					0,1,2,... (all multiplied by 2 * image width, since it's a 1D depth array)
+
+					by making the orthant sizes 3x3 (i.e. NUM_COLUMNS = 160; NUM_ROWS = 120;)
+					*/
+					if (depthMap[x + (y * width)] != 0 && depthMap[x + (y * width)] < mCam.getFarClip())
+					{
+						//averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] += depthMap[x + (y * width)];
+						//numDepthPointsUsed++;
+						sum += depthMap[x + (y * width)];
+						windowPixels.push_back(depthMap[x + (y * width)]);
+						
+						//total += depthMap[x + (y * width)];
+						//totalSq += depthMap[x + (y * width)] * depthMap[x + (y * width)];
+					}
+				}
+			}
+						
+			if (windowPixels.size() > 0)
+			{
+
+				windowPixels.sort();
+				if (windowPixels.back() - windowPixels.front() > VariableCap)
+				{
+					averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
+				}
+				else
+				{
+					averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = (uint16_t)(sum / windowPixels.size());// numDepthPointsUsed;
+				}
+				//float varianceOfDepth = totalSq / numDepthPointsUsed - (total / numDepthPointsUsed) * (total / numDepthPointsUsed);
+				//if (math<float>::sqrt(varianceOfDepth) > 50)
+				//{
+				//	averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
+				//}
+			}
+		}
+	}
+
+	return averages;
+}
+
 
 #if defined( CINDER_MSW ) && ! defined( CINDER_GL_ANGLE )
 auto options = RendererGl::Options().version(3, 3); // instancing functions are technically only in GL 3.3
