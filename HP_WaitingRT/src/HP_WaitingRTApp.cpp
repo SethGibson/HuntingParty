@@ -23,6 +23,8 @@
 #include "depth_filter.h"
 #include "RGBD.h"
 #include "nanoflann.hpp"
+#include <random>
+#include <tuple>
 
 
 using namespace ci;
@@ -103,6 +105,40 @@ public:
 	}
 };
 
+template <typename T>
+struct EdgeCloud
+{
+	std::vector<ivec2>  edges;
+
+	// Must return the number of data points
+	inline size_t kdtree_get_point_count() const { return edges.size(); }
+
+	// Returns the distance between the vector "p1[0:size-1]" and the data point with index "idx_p2" stored in the class:
+	inline T kdtree_distance(const T *p1, const size_t idx_p2, size_t /*size*/) const
+	{
+		const T d0 = p1[0] - edges[idx_p2].x;
+		const T d1 = p1[1] - edges[idx_p2].y;
+		return d0*d0 + d1*d1;
+	}
+
+	// Returns the dim'th component of the idx'th point in the class:
+	// Since this is inlined and the "dim" argument is typically an immediate value, the
+	//  "if/else's" are actually solved at compile time.
+	inline T kdtree_get_pt(const size_t idx, int dim) const
+	{
+		if (dim == 0) return edges[idx].x;
+		else return edges[idx].y;
+	}
+
+	// Optional bounding-box computation: return false to default to a standard bbox computation loop.
+	//   Return true if the BBOX was already computed by the class and returned in "bb" so it can be avoided to redo it again.
+	//   Look at bb.size() to find out the expected dimensionality (e.g. 2 or 3 for point clouds)
+	template <class BBOX>
+	bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
+
+};
+
+typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
 
 class HP_WaitingRTApp : public AppNative {
 public:
@@ -118,6 +154,8 @@ public:
 	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
+
+	void GetKDEdgeIndex(uint16_t* depthFrame, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud);
 
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
@@ -175,6 +213,12 @@ int backNumberToDraw = 0;
 double previousElapsedTime = 0;
 
 const float MaxDeathTimeSeconds = 5;
+
+std::mt19937 engine;
+
+//std::uniform_real_distribution<float> dist(0.3f, 1.2f);
+
+float getRandomFloat(float a, float b) { return std::uniform_real_distribution<float>(a, b)(engine); }
 
 
 void HP_WaitingRTApp::setup()
@@ -256,7 +300,7 @@ void HP_WaitingRTApp::setup()
 	// create the VBO which will contain per-instance (rather than per-vertex) data
 	mInstancePositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
 	mInstanceScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, cubeScales.size() * sizeof(float), cubeScales.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize) * sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
@@ -275,7 +319,7 @@ void HP_WaitingRTApp::setup()
 	// and finally, build our batch, mapping our CUSTOM_0 attribute to the "vInstancePosition" GLSL vertex attribute
 	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
 
-	
+
 	geom::BufferLayout instanceDyingDataLayout;
 	instanceDyingDataLayout.append(geom::Attrib::CUSTOM_2, 3, 0, 0, 1 /* per instance */);
 
@@ -326,39 +370,6 @@ void HP_WaitingRTApp::resize()
 	gl::setMatrices(mCam);
 }
 
-template <typename T>
-struct EdgeCloud
-{
-	std::vector<ivec2>  edges;
-
-	// Must return the number of data points
-	inline size_t kdtree_get_point_count() const { return edges.size(); }
-
-	// Returns the distance between the vector "p1[0:size-1]" and the data point with index "idx_p2" stored in the class:
-	inline T kdtree_distance(const T *p1, const size_t idx_p2, size_t /*size*/) const
-	{
-		const T d0 = p1[0] - edges[idx_p2].x;
-		const T d1 = p1[1] - edges[idx_p2].y;
-		return d0*d0 + d1*d1;
-	}
-
-	// Returns the dim'th component of the idx'th point in the class:
-	// Since this is inlined and the "dim" argument is typically an immediate value, the
-	//  "if/else's" are actually solved at compile time.
-	inline T kdtree_get_pt(const size_t idx, int dim) const
-	{
-		if (dim == 0) return edges[idx].x;
-		else return edges[idx].y;
-	}
-
-	// Optional bounding-box computation: return false to default to a standard bbox computation loop.
-	//   Return true if the BBOX was already computed by the class and returned in "bb" so it can be avoided to redo it again.
-	//   Look at bb.size() to find out the expected dimensionality (e.g. 2 or 3 for point clouds)
-	template <class BBOX>
-	bool kdtree_get_bbox(BBOX& /*bb*/) const { return false; }
-
-};
-
 void HP_WaitingRTApp::update()
 {
 
@@ -387,9 +398,9 @@ void HP_WaitingRTApp::update()
 
 
 	/*
-		just in place to test different things right now.
+	just in place to test different things right now.
 	*/
-	if (false)
+	if (true)
 	{
 		//Given mapped buffers, set up all the particles for drawing.
 		SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
@@ -426,19 +437,19 @@ void HP_WaitingRTApp::update()
 					vec3 subsampledDepthPoint = vec3(
 						((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 						((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
-						subsampledAverageDepth);							
+						subsampledAverageDepth);
 
 					vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
 
 					*positions++ = worldPos;
-					*scales++ = (float)mDepthSubsampleSize / 2;// 1.0f;
+					*scales++ = 1.0f;// (float)mDepthSubsampleSize / 2;// 1.0f;
 
 					numberToDraw++;
 				}
 			}
 		}
 	}
-	
+
 
 	mInstancePositionVbo->unmap();
 	mInstanceScaleVbo->unmap();
@@ -453,91 +464,26 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 {
 	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
 
+
 	uint16_t* originalDepthBuffer = mDepthBuffer.getDataStore().get();
-	Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
-	Mat depthf(Size(width, height), CV_8UC1);
-	depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
 
-	//uint16_t* depth = mDepthBuffer.getDataStore().get();
-	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
-	InputArray input = InputArray(depthf);
-	OutputArray output = OutputArray(depthf);
-	output.create(Size(width, height), CV_8UC1);
-	cv::Canny(input, output, lowThreshold, highThreshold);
-
-	//kd-tree of canny edges to proper depth values for all the valid depth pixels later
-
-	std::vector<ivec2> validEdges;
-	for (int y = 0; y < height; y++)
-	{
-		for (int x = 0; x < width; x++)
-		{
-			uint16_t originalDepth = originalDepthBuffer[x + (y * width)];
-
-			if (output.getMat().data[x + y * width] != 0 && //isn't zero (therefore 255, aka an edge)
-				originalDepth != 0 && //is valid depth point
-				originalDepth < mCam.getFarClip()) //isn't clipped by clip plane
-			{
-				////valid edge & depth, now check if we're being redundant
-
-				//int rem = originalDepth % HogBinStep;
-				////round up to farther bin
-				//originalDepth += HogBinStep - rem;
-
-
-				validEdges.push_back(ivec2(x, y));
-			}
-		}
-	}
-
-	typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
-	EdgeCloud<int> edgeCloud;
-	if (validEdges.size() <= DesiredEdgeNumCap)
-	{
-		edgeCloud.edges = validEdges;
-	}
-	else //decimate to desired number of edges
-	{
-		for (int i = 0; i < validEdges.size(); i += validEdges.size() / DesiredEdgeNumCap)
-		{
-			edgeCloud.edges.push_back(validEdges[i]);
-		}
-	}
+	/* CANNY EDGE BUILDING */
+	EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
+	Mat cannyEdgePixels; //pass as reference to set the mat of canny edge pixels
+	GetKDEdgeIndex(originalDepthBuffer, cannyEdgePixels, edgeCloud);
 
 	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
-
 	index.buildIndex();
+	bool kdIndexReady = (index.size() > 0);
+	/* END OF CANNY EDGE BUILDING */
 
-	/*
-	Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
-
-	//uint16_t* depth = mDepthBuffer.getDataStore().get();
-	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
-	InputArray input = InputArray(depth);
-	OutputArray output = OutputArray(depth);
-	output.create(Size(width, height), CV_16U);
-	cv::Canny(input, output, 1, 3);
-	*/
-
-	/* //LEO DEPTH FILTER (not working, because stuff is setup wrong?)
-	uint16_t* depth = mDepthBuffer.getDataStore().get();
-	uint8_t* rgb = mRgbBuffer.getDataStore().get();
-	RGBD remapper(mDSAPI->getDSAPI().get());
-	remapper.getRGBAlignedZ(mDSAPI->getDSAPI()->getZImage(), zAligned);
-
-	depthf_Filter(mDepthFilter, zAligned, rgb, depth);
-
-	//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
-	//depth = remapZ;										//
-	*/
-	bool kdIndexReady = index.size() > 0;
 
 	for (int potX = 0; potX < width; ++potX)
 	{
 		for (int potY = 0; potY < height; ++potY)
 		{
-			float v = mDepthBuffer.getDataStore().get()[potX + (width * potY)];
-			bool cannyEdgePixel = (output.getMat().data[potX + (width * potY)] != 0);
+			float v = originalDepthBuffer[potX + (width * potY)];
+			bool cannyEdgePixel = (cannyEdgePixels.data[potX + (width * potY)] != 0);
 			//	v = lmap<float>(v, 1, 255, 400, 5000); // (float)depth[potX + (width * potY)];//depth.data[potX + (width * potY)];
 
 			if (v != 0 && mCam.getFarClip() > v)
@@ -550,7 +496,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 				if (cannyEdgePixel)
 					*scales++ = 1.5f;
 				else
-					*scales++ = 2.0f;//0.3f;
+					*scales++ = 0.5f;//0.3f;
 
 				numberToDraw++;
 
@@ -589,6 +535,8 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					float s = math<float>::sin(lerpPercent);
 					float additionalZ = silhouetteZOffset * (s * s);/* + (zDiff * mirrorDepthLerpPastPercentage) * lerpPercent*/;
 
+					additionalZ = zDiff;
+
 					*backPositions++ = vec3(worldPos.x, worldPos.y, v + (additionalZ * 1));
 
 					*fillerScales++ = 2;
@@ -625,7 +573,7 @@ void HP_WaitingRTApp::draw()
 	gl::setMatrices(mMayaCam.getCamera());
 
 	// glm::mat3(glm::vec3(1, 0, 0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1));
-	
+
 	//glm::mat4 blah = glm::rotate((float)(abs(cos(getElapsedSeconds() / 8)) * 180), glm::vec3(0, 0, 1));
 	glm::mat4 blah;
 
@@ -694,7 +642,7 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 {
 	const int orthant_width = subsampleWindowSize;
 	const int orthant_height = subsampleWindowSize;
-	
+
 	std::vector<uint16_t> averages(width / subsampleWindowSize * height / subsampleWindowSize);
 
 	for (int row = 0; row < height; row += orthant_height)
@@ -709,6 +657,8 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 			//int numDepthPointsUsed = 0;
 			std::list<uint16_t> windowPixels;
 			uint32_t sum = 0;
+			uint16_t lowestDepth;
+			uint16_t highestDepth;
 			for (int y = topLeftY; y < topLeftY + orthant_height; y++)
 			{ //every row in orthant
 				for (int x = topLeftX; x < topLeftX + orthant_width; x++)
@@ -732,20 +682,33 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 					{
 						//averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] += depthMap[x + (y * width)];
 						//numDepthPointsUsed++;
-						sum += depthMap[x + (y * width)];
-						windowPixels.push_back(depthMap[x + (y * width)]);
-						
+						uint16_t d = depthMap[x + (y * width)];
+						sum += d;
+						windowPixels.push_back(d);
+
+						if (windowPixels.size() == 1)
+						{ //initialize lowest/highest
+							lowestDepth = d;
+							highestDepth = d;
+						}
+						else
+						{ //keep track of lowest and highest
+							if (lowestDepth > d)
+								lowestDepth = d;
+
+							if (highestDepth < d)
+								highestDepth = d;
+						}
+
 						//total += depthMap[x + (y * width)];
 						//totalSq += depthMap[x + (y * width)] * depthMap[x + (y * width)];
 					}
 				}
 			}
-						
+
 			if (windowPixels.size() > 0)
 			{
-
-				windowPixels.sort();
-				if (windowPixels.back() - windowPixels.front() > VariableCap)
+				if (highestDepth - lowestDepth > VariableCap)
 				{
 					averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
 				}
@@ -763,6 +726,84 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 	}
 
 	return averages;
+}
+
+void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud)
+{
+	Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
+	Mat depthf(Size(width, height), CV_8UC1);
+	depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
+
+	//uint16_t* depth = mDepthBuffer.getDataStore().get();
+	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
+	InputArray input = InputArray(depthf);
+	OutputArray output = OutputArray(depthf);
+	output.create(Size(width, height), CV_8UC1);
+	cv::Canny(input, output, lowThreshold, highThreshold);
+
+
+	cannyEdgePixels = output.getMatRef();
+
+	//kd-tree of canny edges to proper depth values for all the valid depth pixels later
+
+	std::vector<ivec2> validEdges;
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			uint16_t originalDepth = depthFrame[x + (y * width)];
+
+			if (output.getMat().data[x + y * width] != 0 && //isn't zero (therefore 255, aka an edge)
+				originalDepth != 0 && //is valid depth point
+				originalDepth < mCam.getFarClip()) //isn't clipped by clip plane
+			{
+				////valid edge & depth, now check if we're being redundant
+
+				//int rem = originalDepth % HogBinStep;
+				////round up to farther bin
+				//originalDepth += HogBinStep - rem;
+
+
+				validEdges.push_back(ivec2(x, y));
+			}
+		}
+	}
+
+
+	if (validEdges.size() <= DesiredEdgeNumCap)
+	{
+		edgeCloud.edges = validEdges;
+	}
+	else //decimate to desired number of edges
+	{
+		for (int i = 0; i < validEdges.size(); i += validEdges.size() / DesiredEdgeNumCap)
+		{
+			edgeCloud.edges.push_back(validEdges[i]);
+		}
+	}
+
+	/*
+	Mat depth = Mat(Size(width, height), CV_16U, mDepthBuffer.getDataStore().get());//.getIter();
+
+	//uint16_t* depth = mDepthBuffer.getDataStore().get();
+	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
+	InputArray input = InputArray(depth);
+	OutputArray output = OutputArray(depth);
+	output.create(Size(width, height), CV_16U);
+	cv::Canny(input, output, 1, 3);
+	*/
+
+	/* //LEO DEPTH FILTER (not working, because stuff is setup wrong?)
+	uint16_t* depth = mDepthBuffer.getDataStore().get();
+	uint8_t* rgb = mRgbBuffer.getDataStore().get();
+	RGBD remapper(mDSAPI->getDSAPI().get());
+	remapper.getRGBAlignedZ(mDSAPI->getDSAPI()->getZImage(), zAligned);
+
+	depthf_Filter(mDepthFilter, zAligned, rgb, depth);
+
+	//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
+	//depth = remapZ;										//
+	*/
 }
 
 
