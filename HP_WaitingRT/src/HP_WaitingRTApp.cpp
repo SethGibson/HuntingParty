@@ -155,7 +155,7 @@ public:
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
 
-	void GetKDEdgeIndex(uint16_t* depthFrame, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud);
+	void GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud);
 
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
@@ -400,7 +400,7 @@ void HP_WaitingRTApp::update()
 	/*
 	just in place to test different things right now.
 	*/
-	if (true)
+	if (false)
 	{
 		//Given mapped buffers, set up all the particles for drawing.
 		SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
@@ -414,16 +414,16 @@ void HP_WaitingRTApp::update()
 		int subsampledHeight = height / mDepthSubsampleSize;
 
 
-		//Mat depth = Mat(Size(width, height), CV_16UC1, subsampledDepths.data());//.getIter();
-		//Mat depthf(Size(width, height), CV_8UC1);
-		//depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
 
-		////uint16_t* depth = mDepthBuffer.getDataStore().get();
-		////uint8_t* rgb = mRgbBuffer.getDataStore().get();
-		//InputArray input = InputArray(depthf);
-		//OutputArray output = OutputArray(depthf);
-		//output.create(Size(width, height), CV_8UC1);
-		//cv::erode(input, output, InputArray(Mat(Size(3, 3, CV_8UC1))));
+		/* CANNY EDGE BUILDING */
+		EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
+		Mat cannyEdgePixels; //pass as reference to set the mat of canny edge pixels
+		GetKDEdgeIndex(subsampledDepths.data(), subsampledWidth, subsampledHeight, 9, 11, cannyEdgePixels, edgeCloud);
+
+		my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+		index.buildIndex();
+		bool kdIndexReady = (index.size() > 0);
+		/* END OF CANNY EDGE BUILDING */
 
 
 		for (int y = 0; y < subsampledHeight; y++)
@@ -431,6 +431,7 @@ void HP_WaitingRTApp::update()
 			for (int x = 0; x < subsampledWidth; x++)
 			{
 				float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
+				bool cannyEdgePixel = (cannyEdgePixels.data[x + (subsampledWidth * y)] != 0);
 
 				if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
 				{
@@ -445,6 +446,36 @@ void HP_WaitingRTApp::update()
 					*scales++ = 1.0f;// (float)mDepthSubsampleSize / 2;// 1.0f;
 
 					numberToDraw++;
+
+					//--------------
+					if (kdIndexReady)
+					{
+						const float mirrorDepthLerpPastPercentage = 0.8; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
+						const float silhouetteZOffset = 1500; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
+
+						const int query_pt[2] = { x, y };
+						const size_t num_results = 1;
+						std::vector<size_t>   ret_index(num_results);
+						std::vector<int> out_dist_sqr(num_results);
+						index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
+						float axisZ = subsampledDepths[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * subsampledWidth];
+						float zDiff = math<float>::abs(axisZ - subsampledAverageDepth);
+
+
+						float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
+						float s = math<float>::sin(lerpPercent);
+						float additionalZ = silhouetteZOffset * (s * s);
+
+						additionalZ = zDiff;  /* UNCOMMENT THIS LINE TO GET FLAT BACKS, MULTIPLY zDiff by 2 TO GET MIRROR */
+
+						*backPositions++ = vec3(worldPos.x, worldPos.y, subsampledAverageDepth + (additionalZ * 1));
+
+						*fillerScales++ = 2;
+
+						backNumberToDraw++;
+					}
+
+					//--------
 				}
 			}
 		}
@@ -470,7 +501,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	/* CANNY EDGE BUILDING */
 	EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
 	Mat cannyEdgePixels; //pass as reference to set the mat of canny edge pixels
-	GetKDEdgeIndex(originalDepthBuffer, cannyEdgePixels, edgeCloud);
+	GetKDEdgeIndex(originalDepthBuffer, width, height, lowThreshold, highThreshold, cannyEdgePixels, edgeCloud);
 
 	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
 	index.buildIndex();
@@ -728,18 +759,18 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 	return averages;
 }
 
-void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud)
+void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud)
 {
-	Mat depth = Mat(Size(width, height), CV_16UC1, mDepthBuffer.getDataStore().get());//.getIter();
-	Mat depthf(Size(width, height), CV_8UC1);
+	Mat depth = Mat(Size(depthWidth, depthHeight), CV_16UC1, depthFrame);//.getIter();
+	Mat depthf(Size(depthWidth, depthHeight), CV_8UC1);
 	depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
 
 	//uint16_t* depth = mDepthBuffer.getDataStore().get();
 	//uint8_t* rgb = mRgbBuffer.getDataStore().get();
 	InputArray input = InputArray(depthf);
 	OutputArray output = OutputArray(depthf);
-	output.create(Size(width, height), CV_8UC1);
-	cv::Canny(input, output, lowThreshold, highThreshold);
+	output.create(Size(depthWidth, depthHeight), CV_8UC1);
+	cv::Canny(input, output, lowThresh, highThresh);
 
 
 	cannyEdgePixels = output.getMatRef();
@@ -747,13 +778,13 @@ void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, Mat &cannyEdgePixels,
 	//kd-tree of canny edges to proper depth values for all the valid depth pixels later
 
 	std::vector<ivec2> validEdges;
-	for (int y = 0; y < height; y++)
+	for (int y = 0; y < depthHeight; y++)
 	{
-		for (int x = 0; x < width; x++)
+		for (int x = 0; x < depthWidth; x++)
 		{
-			uint16_t originalDepth = depthFrame[x + (y * width)];
+			uint16_t originalDepth = depthFrame[x + (y * depthWidth)];
 
-			if (output.getMat().data[x + y * width] != 0 && //isn't zero (therefore 255, aka an edge)
+			if (output.getMat().data[x + y * depthWidth] != 0 && //isn't zero (therefore 255, aka an edge)
 				originalDepth != 0 && //is valid depth point
 				originalDepth < mCam.getFarClip()) //isn't clipped by clip plane
 			{
