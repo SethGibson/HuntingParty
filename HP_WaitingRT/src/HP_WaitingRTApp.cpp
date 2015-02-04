@@ -396,90 +396,7 @@ void HP_WaitingRTApp::update()
 	numberToDraw = 0;
 	backNumberToDraw = 0;
 
-
-	/*
-	just in place to test different things right now.
-	*/
-	if (false)
-	{
-		//Given mapped buffers, set up all the particles for drawing.
-		SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
-	}
-	else
-	{
-		//subsampled depth particles:::
-
-		std::vector<uint16_t> subsampledDepths = GetSuperPixelAverageDepths(mDepthBuffer.getDataStore().get(), width, height, mDepthSubsampleSize);
-		int subsampledWidth = width / mDepthSubsampleSize;
-		int subsampledHeight = height / mDepthSubsampleSize;
-
-
-
-		/* CANNY EDGE BUILDING */
-		EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
-		Mat cannyEdgePixels; //pass as reference to set the mat of canny edge pixels
-		GetKDEdgeIndex(subsampledDepths.data(), subsampledWidth, subsampledHeight, 9, 11, cannyEdgePixels, edgeCloud);
-
-		my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
-		index.buildIndex();
-		bool kdIndexReady = (index.size() > 0);
-		/* END OF CANNY EDGE BUILDING */
-
-
-		for (int y = 0; y < subsampledHeight; y++)
-		{
-			for (int x = 0; x < subsampledWidth; x++)
-			{
-				float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
-				bool cannyEdgePixel = (cannyEdgePixels.data[x + (subsampledWidth * y)] != 0);
-
-				if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
-				{
-					vec3 subsampledDepthPoint = vec3(
-						((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
-						((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
-						subsampledAverageDepth);
-
-					vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
-
-					*positions++ = worldPos;
-					*scales++ = 1.0f;// (float)mDepthSubsampleSize / 2;// 1.0f;
-
-					numberToDraw++;
-
-					//--------------
-					if (kdIndexReady)
-					{
-						const float mirrorDepthLerpPastPercentage = 0.8; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
-						const float silhouetteZOffset = 1500; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
-
-						const int query_pt[2] = { x, y };
-						const size_t num_results = 1;
-						std::vector<size_t>   ret_index(num_results);
-						std::vector<int> out_dist_sqr(num_results);
-						index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
-						float axisZ = subsampledDepths[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * subsampledWidth];
-						float zDiff = math<float>::abs(axisZ - subsampledAverageDepth);
-
-
-						float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
-						float s = math<float>::sin(lerpPercent);
-						float additionalZ = silhouetteZOffset * (s * s);
-
-						additionalZ = zDiff;  /* UNCOMMENT THIS LINE TO GET FLAT BACKS, MULTIPLY zDiff by 2 TO GET MIRROR */
-
-						*backPositions++ = vec3(worldPos.x, worldPos.y, subsampledAverageDepth + (additionalZ * 1));
-
-						*fillerScales++ = 2;
-
-						backNumberToDraw++;
-					}
-
-					//--------
-				}
-			}
-		}
-	}
+	SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
 
 
 	mInstancePositionVbo->unmap();
@@ -498,10 +415,19 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 	uint16_t* originalDepthBuffer = mDepthBuffer.getDataStore().get();
 
+	//subsampled depth particles:::
+	std::vector<uint16_t> subsampledDepths = GetSuperPixelAverageDepths(mDepthBuffer.getDataStore().get(), width, height, mDepthSubsampleSize);
+	int subsampledWidth = width / mDepthSubsampleSize;
+	int subsampledHeight = height / mDepthSubsampleSize;
+
+
 	/* CANNY EDGE BUILDING */
 	EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
 	Mat cannyEdgePixels; //pass as reference to set the mat of canny edge pixels
-	GetKDEdgeIndex(originalDepthBuffer, width, height, lowThreshold, highThreshold, cannyEdgePixels, edgeCloud);
+	if (mDepthSubsampleSize == 1)
+		GetKDEdgeIndex(subsampledDepths.data(), subsampledWidth, subsampledHeight, lowThreshold, highThreshold, cannyEdgePixels, edgeCloud);
+	else
+		GetKDEdgeIndex(subsampledDepths.data(), subsampledWidth, subsampledHeight, 9, 11, cannyEdgePixels, edgeCloud);
 
 	my_kd_tree_t index(2, edgeCloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
 	index.buildIndex();
@@ -509,19 +435,22 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	/* END OF CANNY EDGE BUILDING */
 
 
-	for (int potX = 0; potX < width; ++potX)
+	for (int y = 0; y < subsampledHeight; y++)
 	{
-		for (int potY = 0; potY < height; ++potY)
+		for (int x = 0; x < subsampledWidth; x++)
 		{
-			float v = originalDepthBuffer[potX + (width * potY)];
-			bool cannyEdgePixel = (cannyEdgePixels.data[potX + (width * potY)] != 0);
-			//	v = lmap<float>(v, 1, 255, 400, 5000); // (float)depth[potX + (width * potY)];//depth.data[potX + (width * potY)];
+			float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
+			bool cannyEdgePixel = (cannyEdgePixels.data[x + (subsampledWidth * y)] != 0);
 
-			if (v != 0 && mCam.getFarClip() > v)
+			if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
 			{
-				vec3 worldPos = mDSAPI->getDepthSpacePoint(vec3((float)potX, (float)potY, v));
+				vec3 subsampledDepthPoint = vec3(
+					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					subsampledAverageDepth);
 
-				//*positions++ = vec3(potX / width - 0.5f, potY / height - 0.5f, 0);// depth[potX + (potY * width)]
+				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+
 				*positions++ = worldPos;
 
 				if (cannyEdgePixel)
@@ -531,21 +460,21 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 				numberToDraw++;
 
-				mPreviousValidDepthCoord[potX + (potY * width)] = worldPos;
-				mPreviouslyHadDepth[potX + (potY * width)] = true;
+				mPreviousValidDepthCoord[x + (y * subsampledWidth)] = worldPos;
+				mPreviouslyHadDepth[x + (y * subsampledWidth)] = true;
 
 				if (kdIndexReady)
 				{
 					const float mirrorDepthLerpPastPercentage = 0.8; //percentage of Z to add PAST the axis depth, based on how far away this depth pixel was from it's axis. (0% to 100%)
-					const float silhouetteZOffset = 150; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
+					const float silhouetteZOffset = 1500; //additional z offset past the edge this pixel is bound to, so pixels near the edge still add at least *some* z.
 
-					const int query_pt[2] = { potX, potY };
+					const int query_pt[2] = { x, y };
 					const size_t num_results = 1;
 					std::vector<size_t>   ret_index(num_results);
 					std::vector<int> out_dist_sqr(num_results);
 					index.knnSearch(&query_pt[0], num_results, &ret_index[0], &out_dist_sqr[0]);
-					float axisZ = originalDepthBuffer[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * width];
-					float zDiff = math<float>::abs(axisZ - v);
+					float axisZ = subsampledDepths[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * subsampledWidth];
+					float zDiff = math<float>::abs(axisZ - subsampledAverageDepth);
 					//float additionalZ = zDiff + (zDiff * mirrorDepthLerpPastPercentage); //original depth + diff on axis + percentage of the original depth difference
 
 					//float additionalZ = silhouetteZOffset + ((zDiff + (zDiff * mirrorDepthLerpPastPercentage)) * (math<float>::clamp(lmap<float>(out_dist_sqr[0], 0, 1000, 0.3, 1), 0.3, 1)));
@@ -564,11 +493,11 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					*/
 					float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
 					float s = math<float>::sin(lerpPercent);
-					float additionalZ = silhouetteZOffset * (s * s);/* + (zDiff * mirrorDepthLerpPastPercentage) * lerpPercent*/;
+					float additionalZ = silhouetteZOffset * (s * s);
 
-					additionalZ = zDiff;
+					additionalZ = zDiff;  /* UNCOMMENT THIS LINE TO GET FLAT BACKS, MULTIPLY zDiff by 2 TO GET MIRROR */
 
-					*backPositions++ = vec3(worldPos.x, worldPos.y, v + (additionalZ * 1));
+					*backPositions++ = vec3(worldPos.x, worldPos.y, subsampledAverageDepth + (additionalZ * 1));
 
 					*fillerScales++ = 2;
 
@@ -579,12 +508,12 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 			{
 				if (cannyEdgePixel &&
 					mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MaxNumberDyingParticleBufferSize &&
-					mPreviouslyHadDepth[potX + (potY * width)]) //there was depth and it just died
+					mPreviouslyHadDepth[x + (y * subsampledWidth)]) //there was depth and it just died
 				{
-					dyingParticlesToAdd.push_back(ParticleInstance(mPreviousValidDepthCoord[potX + (potY * width)], vec2(potX, potY), elapsed));
+					dyingParticlesToAdd.push_back(ParticleInstance(mPreviousValidDepthCoord[x + (y * subsampledWidth)], vec2(x, y), elapsed));
 				}
 
-				mPreviouslyHadDepth[potX + (potY * width)] = false;
+				mPreviouslyHadDepth[x + (y * subsampledWidth)] = false;
 			}
 		}
 	}
@@ -621,7 +550,7 @@ void HP_WaitingRTApp::draw()
 	mGlslDyingCubes->uniform("MaxLifetime", DeathLifetimeInSeconds);
 
 	mBatchBackubes->drawInstanced(backNumberToDraw);
-	//mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
+	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
 	mBatch->drawInstanced(numberToDraw);
 
 	//console() << numberToDraw << endl;
@@ -644,11 +573,23 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 	else if (event.getChar() == '3'){
 		do {
 			mDepthSubsampleSize = math<int>::min(8, mDepthSubsampleSize + 1); //MAX OUT AT 12x12 window size
+
+			mPreviousValidDepthCoord.clear();
+			mPreviousValidDepthCoord = std::vector<vec3>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
+			mPreviouslyHadDepth.clear();
+			mPreviouslyHadDepth = std::vector<bool>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
+			std::fill(mPreviouslyHadDepth.begin(), mPreviouslyHadDepth.end(), false);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
 	}
 	else if (event.getChar() == 'e'){
 		do {
 			mDepthSubsampleSize = math<int>::max(1, mDepthSubsampleSize - 1);
+
+			mPreviousValidDepthCoord.clear();
+			mPreviousValidDepthCoord = std::vector<vec3>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
+			mPreviouslyHadDepth.clear();
+			mPreviouslyHadDepth = std::vector<bool>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
+			std::fill(mPreviouslyHadDepth.begin(), mPreviouslyHadDepth.end(), false);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
 	}
 
@@ -675,6 +616,15 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 	const int orthant_height = subsampleWindowSize;
 
 	std::vector<uint16_t> averages(width / subsampleWindowSize * height / subsampleWindowSize);
+
+	if (subsampleWindowSize == 1) //if we shouldn't be subsampling because the window size is 1x1, just pass the depthMap as a vector<uint16_t>
+	{
+		for (int i = 0; i < averages.size(); i++)
+		{
+			averages[i] = depthMap[i];
+		}
+		return averages;
+	}
 
 	for (int row = 0; row < height; row += orthant_height)
 	{
@@ -761,7 +711,7 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 
 void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud)
 {
-	Mat depth = Mat(Size(depthWidth, depthHeight), CV_16UC1, depthFrame);//.getIter();
+	Mat depth = Mat(Size(depthWidth, depthHeight), CV_16U, depthFrame);//.getIter();
 	Mat depthf(Size(depthWidth, depthHeight), CV_8UC1);
 	depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
 
