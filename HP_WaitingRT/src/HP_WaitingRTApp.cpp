@@ -64,6 +64,9 @@ int width;
 int height;
 int numberToDraw = 0;
 int backNumberToDraw = 0;
+float GravityForceMultiplier = 9.8;
+float ForwardForceMultiplier = 1;
+uint32_t previousTotalDepth = 0;
 
 double previousElapsedTime = 0;
 
@@ -478,6 +481,8 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	/* END OF CANNY EDGE BUILDING */
 
 
+	uint32_t currentTotalDepth = 0;
+
 	for (int y = 0; y < subsampledHeight; y++)
 	{
 		for (int x = 0; x < subsampledWidth; x++)
@@ -487,6 +492,8 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 			if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
 			{
+				currentTotalDepth += subsampledAverageDepth;
+
 				vec3 subsampledDepthPoint = vec3(
 					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
@@ -618,6 +625,10 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 	//setup the gpu memory positions
 	mDyingParticleManager.SetupBatchDraw(mCurrentlyHasDyingInstance, deathPositions, totalLivingTimes, dyingScales, elapsed, 1.0f, subsampledWidth, subsampledHeight);
+
+
+	ForwardForceMultiplier = (currentTotalDepth / (subsampledWidth * subsampledHeight)) - (previousTotalDepth / (subsampledWidth * subsampledHeight));
+	previousTotalDepth = currentTotalDepth;
 }
 
 void HP_WaitingRTApp::draw()
@@ -643,6 +654,12 @@ void HP_WaitingRTApp::draw()
 
 	mGlslDyingCubes->bind();
 	mGlslDyingCubes->uniform("MaxLifetime", DeathLifetimeInSeconds);
+
+	mGlslDyingCubes->bind();
+	mGlslDyingCubes->uniform("Gravity", GravityForceMultiplier);
+
+	mGlslDyingCubes->bind();
+	mGlslDyingCubes->uniform("ForwardForceMult", 1); // ForwardForceMultiplier); /* COMMENTED OUT FOR NOW, NEEDS LERP! */
 
 	mBatchBackubes->drawInstanced(backNumberToDraw);
 	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
