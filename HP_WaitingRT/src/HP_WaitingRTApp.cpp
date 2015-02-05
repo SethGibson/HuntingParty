@@ -94,7 +94,7 @@ public:
 
 	int CurrentTotalParticles = 0;
 
-	void AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
+	bool AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
 	{
 		if (CurrentTotalParticles + particles.size() <= MaxNumberDyingParticleBufferSize)
 		{
@@ -102,7 +102,10 @@ public:
 
 			mDyingParticleBatches.push_back(particles);
 			BatchCreationTime.push_back(currentTime);
+			return true;
 		}
+
+		return false;
 	}
 
 	void CleanupUpdate(float currentTime)
@@ -113,8 +116,10 @@ public:
 		}
 	}
 
-	void SetupBatchDraw(vec3* mappedPositionsVBO, float* totalLivingTimesVBO, float* dyingScalesVBO, float currentTime, float dyingScale)
+	void SetupBatchDraw(std::vector<bool> &dyingExistsArray, vec3* mappedPositionsVBO, float* totalLivingTimesVBO, float* dyingScalesVBO, float currentTime, float dyingScale, int currentDyingExistsArrayWidth, int currentDyingExistsArrayHeight)
 	{
+		std::fill(dyingExistsArray.begin(), dyingExistsArray.end(), false);
+
 		for (int i = 0; i < mDyingParticleBatches.size(); i++)
 		{
 			for (int j = 0; j < mDyingParticleBatches[i].size(); j++)
@@ -123,6 +128,8 @@ public:
 				*mappedPositionsVBO++ = mDyingParticleBatches[i][j].InitialPosition;
 				*totalLivingTimesVBO++ = (currentTime - BatchCreationTime[i]);
 				*dyingScalesVBO++ = dyingScale; //getRandomFloat(0.1, 10.0);
+
+				dyingExistsArray[mDyingParticleBatches[i][j].DepthPixelCoord.x + (mDyingParticleBatches[i][j].DepthPixelCoord.y * currentDyingExistsArrayWidth)] = true;
 			}
 		}
 	}
@@ -207,7 +214,7 @@ public:
 	Channel16u mDepthBuffer;
 
 	std::vector<bool> mPreviouslyHadDepth;
-	//std::vector<bool> mCurrentlyHasDeadInstance;
+	std::vector<bool> mCurrentlyHasDyingInstance;
 	std::vector<vec3> mPreviousValidDepthCoord;
 
 	DyingParticlesManager mDyingParticleManager;
@@ -299,7 +306,7 @@ void HP_WaitingRTApp::setup()
 			fillerScales.push_back(randFloat(0.2, 5));
 
 			mPreviouslyHadDepth.push_back(false);
-			//mCurrentlyHasDeadInstance.push_back(false);
+			mCurrentlyHasDyingInstance.push_back(false);
 			mPreviousValidDepthCoord.push_back(pos);
 		}
 	}
@@ -430,6 +437,20 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	backNumberToDraw = 0;
 
 	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
+	std::unordered_map<int, std::vector<ParticleInstance>> dyingGlassBins = std::unordered_map<int, std::vector<ParticleInstance>>(); //Z-value with all x/y integer coords (unmapped) of dying particles associated.
+
+	/*
+	// If you want const qualified access
+	auto it = dyingGlassBins.find(5);
+	if (it != end(dyingGlassBins))
+	{
+		const auto & val = it->second; // is the value
+	}
+
+	// If you happen to have a mutable map
+	dyingGlassBins[5].push_back({ 1, 2 });
+	*/
+	
 
 	std::vector<float> backParticleDepthsToAdd = std::vector<float>();
 	std::vector<float> backParticleScalesToAdd = std::vector<float>();
@@ -515,11 +536,23 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					*/
 					float additionalZ;
 					float zAddMultiplyFactor = 1;
+					float finalZ;
+					float spawnBackParticle = true;
 
 					switch (backSetting)
 					{
 					case BackParticleSetting::ShatteredGlass:
-						additionalZ = zDiff;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
+						additionalZ = zDiff * 2;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
+						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor); //calculate this early
+
+						if (mCurrentlyHasDyingInstance[x + (y * subsampledWidth)] == false)
+						{
+							//store the subsampledDepthMap INDEX of the z position being using (i.e. mapping an initial position to which edge pixel it used)
+							dyingGlassBins[edgeCloud.edges[ret_index[0]].x + edgeCloud.edges[ret_index[0]].y * subsampledWidth].push_back(
+								ParticleInstance(vec3(worldPos.x, worldPos.y, finalZ), vec2(x, y), elapsed));
+							spawnBackParticle = false;
+						}
+
 						break;
 					case BackParticleSetting::AveragedShatteredGlass:
 						additionalZ = zDiff;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
@@ -532,10 +565,19 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 						break;
 					}
 
-					float backScale = 2;
-					backParticleDepthsToAdd.push_back(subsampledAverageDepth + (additionalZ * zAddMultiplyFactor));
-					backParticleScalesToAdd.push_back(backScale);
-
+					if (spawnBackParticle)
+					{
+						float backScale = 2;
+						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor);
+						backParticleDepthsToAdd.push_back(finalZ);
+						backParticleScalesToAdd.push_back(backScale);
+					}
+					else
+					{
+						//no depth, but still add something to keep the width/height's proper for the back particle array:
+						backParticleDepthsToAdd.push_back(0);
+						backParticleScalesToAdd.push_back(0);
+					}
 				}
 			}
 			else //no depth here now, if there was depth, start dying.
@@ -544,7 +586,9 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 				backParticleDepthsToAdd.push_back(0);
 				backParticleScalesToAdd.push_back(0);
 
-				if (//cannyEdgePixel &&
+				if (dyingGlassBins.empty() &&
+					currentParticleSetting != BackParticleSetting::ShatteredGlass && //If this isn't empty, then it should trump normal dying particles.
+					cannyEdgePixel &&
 					mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MaxNumberDyingParticleBufferSize &&
 					mPreviouslyHadDepth[x + (y * subsampledWidth)]) //there was depth and it just died
 				{
@@ -560,10 +604,20 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	SetupBackParticlesDraw(backParticleDepthsToAdd, backParticleScalesToAdd, backPositions, fillerScales, backSetting, subsampledWidth, subsampledHeight);
 
 	if (dyingParticlesToAdd.size() > 0)
+	{
 		mDyingParticleManager.AddDyingParticleBatch(dyingParticlesToAdd, elapsed);
+	}
+	if (dyingGlassBins.size() > 0)
+	{
+		for (auto it = dyingGlassBins.begin(); it != dyingGlassBins.end(); ++it)
+		{
+			if (it->second.size() > DepthSubsampleWindowSize * DepthSubsampleWindowSize * 4 && randBool())
+				mDyingParticleManager.AddDyingParticleBatch(it->second, elapsed);
+		}
+	}
 
 	//setup the gpu memory positions
-	mDyingParticleManager.SetupBatchDraw(deathPositions, totalLivingTimes, dyingScales, elapsed, 1.0f);
+	mDyingParticleManager.SetupBatchDraw(mCurrentlyHasDyingInstance, deathPositions, totalLivingTimes, dyingScales, elapsed, 1.0f, subsampledWidth, subsampledHeight);
 }
 
 void HP_WaitingRTApp::draw()
