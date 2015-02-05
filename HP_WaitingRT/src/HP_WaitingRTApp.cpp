@@ -46,12 +46,34 @@ public:
 	}
 };
 
-const static int MaxNumberDyingParticleBufferSize = 50000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
-const static float DeathLifetimeInSeconds = 1.5; //total time until dying particle instances expire
+enum BackParticleSetting
+{
+	ShatteredGlass,
+	AveragedShatteredGlass,
+	Mountainous
+};
+
+const static int MaxNumberDyingParticleBufferSize = 150000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
+const static float DeathLifetimeInSeconds = 3.5; //total time until dying particle instances expire
 const static int SecondsBetweenNewSpawns = 0.5;
 const static int DepthSubsampleWindowSize = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
 const static int VariableCap = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
 const static int DesiredEdgeNumCap = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
+
+int width;
+int height;
+int numberToDraw = 0;
+int backNumberToDraw = 0;
+
+double previousElapsedTime = 0;
+
+const float MaxDeathTimeSeconds = 5;
+
+std::mt19937 engine;
+
+//std::uniform_real_distribution<float> dist(0.3f, 1.2f);
+
+float getRandomFloat(float a, float b) { return std::uniform_real_distribution<float>(a, b)(engine); }
 
 class DyingParticlesManager
 {
@@ -91,7 +113,7 @@ public:
 		}
 	}
 
-	void SetupBatchDraw(vec3* mappedPositionsVBO, float* totalLivingTimesVBO, float currentTime)
+	void SetupBatchDraw(vec3* mappedPositionsVBO, float* totalLivingTimesVBO, float* dyingScalesVBO, float currentTime, float dyingScale)
 	{
 		for (int i = 0; i < mDyingParticleBatches.size(); i++)
 		{
@@ -100,6 +122,7 @@ public:
 				//we should never end up rendering more than the buffer can hold because the "Add" function checks for that.
 				*mappedPositionsVBO++ = mDyingParticleBatches[i][j].InitialPosition;
 				*totalLivingTimesVBO++ = (currentTime - BatchCreationTime[i]);
+				*dyingScalesVBO++ = dyingScale; //getRandomFloat(0.1, 10.0);
 			}
 		}
 	}
@@ -151,9 +174,11 @@ public:
 	void mouseDown(MouseEvent event) override;
 	void mouseDrag(MouseEvent event) override;
 
-	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed);
+	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed, BackParticleSetting backSetting);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
+
+	void SetupBackParticlesDraw(std::vector<float> backParticlePositions, std::vector<float> backParticleScales, vec3 *backPositionsVBO, float *backScalesVBO, BackParticleSetting particlesSetting, int particleArrayWidth, int particleArrayHeight);
 
 	void GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud);
 
@@ -166,6 +191,7 @@ public:
 	gl::VboRef			mInstancePositionVbo;
 	gl::VboRef			mInstanceScaleVbo;
 	gl::VboRef			mInstanceDyingDataVbo;
+	gl::VboRef			mInstanceDyingScaleVbo;
 	gl::VboRef			mInstanceDyingTotalLifetimesVbo;
 	gl::VboRef			mInstanceFillerScaleVbo;
 
@@ -203,22 +229,8 @@ public:
 	float TimeOfLastInstanceBatchSpawn = -10;
 
 	int mDepthSubsampleSize;
+	BackParticleSetting currentParticleSetting = BackParticleSetting::ShatteredGlass;
 };
-
-int width;
-int height;
-int numberToDraw = 0;
-int backNumberToDraw = 0;
-
-double previousElapsedTime = 0;
-
-const float MaxDeathTimeSeconds = 5;
-
-std::mt19937 engine;
-
-//std::uniform_real_distribution<float> dist(0.3f, 1.2f);
-
-float getRandomFloat(float a, float b) { return std::uniform_real_distribution<float>(a, b)(engine); }
 
 
 void HP_WaitingRTApp::setup()
@@ -274,6 +286,7 @@ void HP_WaitingRTApp::setup()
 	std::vector<float> fillerScales;
 	std::vector<vec3> deathPositions = std::vector<vec3>(MaxNumberDyingParticleBufferSize);
 	std::vector<float> deathTotalLifetimes = std::vector<float>(MaxNumberDyingParticleBufferSize);
+	std::vector<float> dyingScales = std::vector<float>(MaxNumberDyingParticleBufferSize);
 	for (size_t potX = 0; potX < width; ++potX) {
 		for (size_t potY = 0; potY < height; ++potY) {
 			float instanceX = potX / (float)width - 0.5f;
@@ -301,6 +314,7 @@ void HP_WaitingRTApp::setup()
 	mInstancePositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
 	mInstanceScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, cubeScales.size() * sizeof(float), cubeScales.data(), GL_DYNAMIC_DRAW);
 	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize) * sizeof(float), dyingScales.data(), GL_DYNAMIC_DRAW);
 	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
@@ -320,13 +334,16 @@ void HP_WaitingRTApp::setup()
 	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
 
 
+	geom::BufferLayout instanceDyingScaleLayout;
+	instanceDyingScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
+
 	geom::BufferLayout instanceDyingDataLayout;
 	instanceDyingDataLayout.append(geom::Attrib::CUSTOM_2, 3, 0, 0, 1 /* per instance */);
 
 	geom::BufferLayout instanceDeathTotalLifetimesLayout;
 	instanceDeathTotalLifetimesLayout.append(geom::Attrib::CUSTOM_3, 1, 0, 0, 1 /* per instance */);
 
-	meshDying->appendVbo(instanceScaleLayout, mInstanceScaleVbo);
+	meshDying->appendVbo(instanceDyingScaleLayout, mInstanceDyingScaleVbo);
 	meshDying->appendVbo(instanceDyingDataLayout, mInstanceDyingDataVbo);
 	meshDying->appendVbo(instanceDeathTotalLifetimesLayout, mInstanceDyingTotalLifetimesVbo);
 
@@ -389,14 +406,12 @@ void HP_WaitingRTApp::update()
 	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
 	vec3 *backPositions = (vec3*)mInstanceBackPositionVbo->mapWriteOnly(true);
 	float *scales = (float*)mInstanceScaleVbo->mapWriteOnly(true);
+	float *dyingScales = (float*)mInstanceDyingScaleVbo->mapWriteOnly(true);
 	float *fillerScales = (float*)mInstanceFillerScaleVbo->mapWriteOnly(true);
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
 	float *totalLivingTimes = (float*)mInstanceDyingTotalLifetimesVbo->mapWriteOnly(true);
 
-	numberToDraw = 0;
-	backNumberToDraw = 0;
-
-	SetupParticles(positions, backPositions, scales, fillerScales, deathPositions, totalLivingTimes, elapsed);
+	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, elapsed, currentParticleSetting);
 
 
 	mInstancePositionVbo->unmap();
@@ -404,13 +419,20 @@ void HP_WaitingRTApp::update()
 	mInstanceDyingDataVbo->unmap();
 	mInstanceDyingTotalLifetimesVbo->unmap();
 	mInstanceBackPositionVbo->unmap();
+	mInstanceDyingScaleVbo->unmap();
 	mInstanceFillerScaleVbo->unmap();
 }
 
 //Given mapped buffers, set up all the particles for drawing.
-void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed)
+void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed, BackParticleSetting backSetting)
 {
+	numberToDraw = 0;
+	backNumberToDraw = 0;
+
 	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
+
+	std::vector<float> backParticleDepthsToAdd = std::vector<float>();
+	std::vector<float> backParticleScalesToAdd = std::vector<float>();
 
 
 	uint16_t* originalDepthBuffer = mDepthBuffer.getDataStore().get();
@@ -491,22 +513,38 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					- without doing this, we have the shattered glass back effect, which may be fine.
 					NOTE: ANOTHER WAY TO SOLVE THIS: simply use low = 4 and high = 5 for the canny threshold to fix the back, and don't render the edges anymore.
 					*/
-					float lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
-					float s = math<float>::sin(lerpPercent);
-					float additionalZ = silhouetteZOffset * (s * s);
+					float additionalZ;
+					float zAddMultiplyFactor = 1;
 
-					additionalZ = zDiff;  /* UNCOMMENT THIS LINE TO GET FLAT BACKS, MULTIPLY zDiff by 2 TO GET MIRROR */
+					switch (backSetting)
+					{
+					case BackParticleSetting::ShatteredGlass:
+						additionalZ = zDiff;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
+						break;
+					case BackParticleSetting::AveragedShatteredGlass:
+						additionalZ = zDiff;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
+						break;
+					case BackParticleSetting::Mountainous:
+						float lerpPercent;
+						lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
+						float s = math<float>::sin(lerpPercent);
+						additionalZ = silhouetteZOffset * (s * s);
+						break;
+					}
 
-					*backPositions++ = vec3(worldPos.x, worldPos.y, subsampledAverageDepth + (additionalZ * 1));
+					float backScale = 2;
+					backParticleDepthsToAdd.push_back(subsampledAverageDepth + (additionalZ * zAddMultiplyFactor));
+					backParticleScalesToAdd.push_back(backScale);
 
-					*fillerScales++ = 2;
-
-					backNumberToDraw++;
 				}
 			}
 			else //no depth here now, if there was depth, start dying.
 			{
-				if (cannyEdgePixel &&
+				//no depth, but still add something to keep the width/height's proper for the back particle array:
+				backParticleDepthsToAdd.push_back(0);
+				backParticleScalesToAdd.push_back(0);
+
+				if (//cannyEdgePixel &&
 					mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MaxNumberDyingParticleBufferSize &&
 					mPreviouslyHadDepth[x + (y * subsampledWidth)]) //there was depth and it just died
 				{
@@ -517,12 +555,15 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 			}
 		}
 	}
+	
+	//Setup the back particles for drawing, based on the info we passed into the pair array.
+	SetupBackParticlesDraw(backParticleDepthsToAdd, backParticleScalesToAdd, backPositions, fillerScales, backSetting, subsampledWidth, subsampledHeight);
 
 	if (dyingParticlesToAdd.size() > 0)
 		mDyingParticleManager.AddDyingParticleBatch(dyingParticlesToAdd, elapsed);
 
 	//setup the gpu memory positions
-	mDyingParticleManager.SetupBatchDraw(deathPositions, totalLivingTimes, elapsed);
+	mDyingParticleManager.SetupBatchDraw(deathPositions, totalLivingTimes, dyingScales, elapsed, 1.0f);
 }
 
 void HP_WaitingRTApp::draw()
@@ -592,7 +633,15 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 			std::fill(mPreviouslyHadDepth.begin(), mPreviouslyHadDepth.end(), false);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
 	}
-
+	else if (event.getChar() == 'z'){
+		currentParticleSetting = BackParticleSetting::ShatteredGlass;
+	}
+	else if (event.getChar() == 'x'){
+		currentParticleSetting = BackParticleSetting::AveragedShatteredGlass;
+	}
+	else if (event.getChar() == 'c'){
+		currentParticleSetting = BackParticleSetting::Mountainous;
+	}
 }
 
 void HP_WaitingRTApp::mouseDown(MouseEvent event)
@@ -687,26 +736,290 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 				}
 			}
 
-			if (windowPixels.size() > 0)
+			if (windowPixels.size() == 0 || highestDepth - lowestDepth > VariableCap)
 			{
-				if (highestDepth - lowestDepth > VariableCap)
-				{
-					averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
-				}
-				else
-				{
-					averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = (uint16_t)(sum / windowPixels.size());// numDepthPointsUsed;
-				}
-				//float varianceOfDepth = totalSq / numDepthPointsUsed - (total / numDepthPointsUsed) * (total / numDepthPointsUsed);
-				//if (math<float>::sqrt(varianceOfDepth) > 50)
-				//{
-				//	averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
-				//}
+				averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
+			}
+			else
+			{
+				averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = (uint16_t)(sum / windowPixels.size());// numDepthPointsUsed;
 			}
 		}
 	}
 
 	return averages;
+}
+
+template <typename T>
+std::vector<T> TransposeWindow(std::vector<T> window)
+{
+	//0, 1, 2      8, 7, 6
+	//3, 4, 5  ->  5, 4, 3
+	//6, 7, 8      2, 1, 0
+	std::vector<T> new_window(window.size());
+
+	new_window[0] = window[8];
+	new_window[1] = window[7];
+	new_window[2] = window[6];
+	new_window[3] = window[5];
+	new_window[4] = window[4];
+	new_window[5] = window[3];
+	new_window[6] = window[2];
+	new_window[7] = window[1];
+	new_window[8] = window[0];
+
+	return new_window;
+}
+
+/// <summary>
+/// Pulling a window of pixels out of an image. All arrays involved are 1-dimensional.
+/// </summary>
+/// <param name="pixels">pixel array, each byte should have a grayscale pixel color, so the size of the array should be (width * height)</param>
+/// <param name="x">middle x position of window</param>
+/// <param name="y">middle y position of window</param>
+/// <param name="width">width of the image</param>
+/// <param name="height">height of the image</param>
+/// <param name="window_size">dimensions of the window</param>
+/// <returns></returns>
+template <typename T>
+std::vector<T> getWindowFromMiddle(std::vector<T> &PreviouslyComputedWindow, std::vector<T> depthData, int x, int y, int w, int h, int window_size = 3)
+{
+	//window size is only 3x3 for now, this is a 9-byte array of depthData
+	//0, 1, 2
+	//3, 4, 5
+	//6, 7, 8
+	std::vector<T> window(window_size * window_size);
+
+	//Corner Cases
+	if (x == 0 && y == 0) //top left is middle
+	{
+		window[0] = depthData[x + 1 + ((y + 1) * w)]; //mirror top left with bottom right
+		window[1] = depthData[x + ((y + 1) * w)]; //mirror top middle with bottom middle
+		window[2] = depthData[x + 1 + ((y + 1) * w)]; //mirror top right with bottom right
+
+		window[3] = depthData[x + 1 + (y * w)]; //mirror middle-left with middle-right
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y + 1) * w)]; //mirror bottom-left with bottom-right
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (x == w - 1 && y == 0) //top right is middle
+	{
+		window[0] = depthData[x - 1 + ((y + 1) * w)]; //0 <- 6
+		window[1] = depthData[x + ((y + 1) * w)]; //1 <- 7
+		window[2] = depthData[x - 1 + ((y + 1) * w)]; //2 <- 6
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x - 1 + ((y + 1) * w)]; //8 <- 6
+	}
+	else if (x == 0 && y == h - 1) //bottom left is middle
+	{
+		window[0] = depthData[x + 1 + ((y - 1) * w)]; //0 <- 2
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x + 1 + (y * w)]; //3 <- 5
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y - 1) * w)]; //6 <- 2
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x + 1 + ((y - 1) * w)]; //8 <- 2
+	}
+	else if (x == w - 1 && y == h - 1) //bottom right is middle
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x - 1 + ((y - 1) * w)]; //2 <- 0
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y - 1) * w)]; //6 <- 0
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x - 1 + ((y - 1) * w)]; //8 <- 0
+	}
+
+	//0, 1, 2
+	//3, 4, 5
+	//6, 7, 8
+
+	//Side Cases
+	else if (y == 0) // middle is in top row
+	{
+		window[0] = depthData[x - 1 + ((y + 1) * w)]; //0 <- 6
+		window[1] = depthData[x + ((y + 1) * w)]; //1 <- 7
+		window[2] = depthData[x + 1 + ((y + 1) * w)]; //2 <- 8
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (x == 0) // middle is in left-most column
+	{
+		window[0] = depthData[x + 1 + ((y - 1) * w)]; //0 <- 2
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x + 1 + (y * w)]; //3 <- 5
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y + 1) * w)]; //6 <- 8
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (y == h - 1) //middle is in bottom row
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x - 1 + ((y - 1) * w)]; //6 <- 0
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x + 1 + ((y - 1) * w)]; //8 <- 2
+	}
+	else if (x == w - 1) //middle is in right-most column
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x - 1 + ((y - 1) * w)]; //2 <- 0
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x - 1 + ((y + 1) * w)]; //8 <- 6
+	}
+
+	//Middle Not a Border
+	else
+	{    //old
+		//X, 1, 2 -- move 1, 2 -> 0, 1
+		//X, 4, 5 -- move 4, 5 -> 3, 4
+		//X, 7, 8 -- move 7, 8 -> 6, 7
+		if (PreviouslyComputedWindow.size() == (w * h) && x > 1 && y > 1 && x < w - 2 && y < h - 2)
+		{ //x just incremented by 1, and we're not next to a border, so we should be able to use the previously computed window to avoid re-computation
+
+			//All this saves is a little bit of time calculating indeces as shown in the else statement here... it doesn't save on the computations for calculating pixel values
+			window[0] = PreviouslyComputedWindow[1];
+			window[1] = PreviouslyComputedWindow[2];
+			window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+			window[3] = PreviouslyComputedWindow[4];
+			window[4] = PreviouslyComputedWindow[5];
+			window[5] = depthData[x + 1 + (y * w)];
+
+			window[6] = PreviouslyComputedWindow[7];
+			window[7] = PreviouslyComputedWindow[8];
+			window[8] = depthData[x + 1 + ((y + 1) * w)];
+		}
+		else
+		{ //compute the window from scratch
+			window[0] = depthData[x - 1 + ((y - 1) * w)];
+			window[1] = depthData[x + ((y - 1) * w)];
+			window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+			window[3] = depthData[x - 1 + (y * w)];
+			window[4] = depthData[x + (y * w)];
+			window[5] = depthData[x + 1 + (y * w)];
+
+			window[6] = depthData[x - 1 + ((y + 1) * w)];
+			window[7] = depthData[x + ((y + 1) * w)];
+			window[8] = depthData[x + 1 + ((y + 1) * w)];
+		}
+	}
+
+	PreviouslyComputedWindow = window;
+
+	window = TransposeWindow(window);
+
+	return window;
+}
+
+//imgDepths is the subsampled back Z's and scales
+std::vector<float> RunBlurKernel(std::vector<float> imgDepths, int w, int h)
+{
+	std::vector<float> blurredImage;
+	std::vector<float> PreviouslyComputedWindow; //used to speed up window computation
+
+	//average out the array data first.
+	for (int y = 0; y < h; y++)
+	{
+		for (int x = 0; x < w; x++)
+		{
+			float averageZ = 0;
+			if (imgDepths[x + (y * w)] != 0)
+			{
+				std::vector<float> currentWindow = getWindowFromMiddle<float>(PreviouslyComputedWindow, imgDepths, x, y, w, h, 3); //3x3 window size
+				int numUsedInWindow = 0;
+				for (int i = 0; i < currentWindow.size(); i++)
+				{
+					if (currentWindow[i] != 0)
+					{
+						averageZ += currentWindow[i];
+						numUsedInWindow++;
+					}
+				}
+
+				averageZ /= (float)numUsedInWindow;
+			}
+			else
+			{
+				PreviouslyComputedWindow.clear();
+			}
+
+			blurredImage.push_back(averageZ);
+		}
+	}
+
+	return blurredImage;
+}
+
+void HP_WaitingRTApp::SetupBackParticlesDraw(std::vector<float> backParticleDepths, std::vector<float> backParticleScales, vec3 *backPositionsVBO, float *backScalesVBO, BackParticleSetting particlesSetting, int particleArrayWidth, int particleArrayHeight)
+{
+	if (particlesSetting == BackParticleSetting::AveragedShatteredGlass)
+	{
+		backParticleDepths = RunBlurKernel(backParticleDepths, particleArrayWidth, particleArrayHeight);
+	}
+
+	for (int y = 0; y < particleArrayHeight; y++)
+	{
+		for (int x = 0; x < particleArrayWidth; x++)
+		{
+			if (backParticleDepths[x + (y * particleArrayWidth)] != 0) //the array still has all the invaild depth values to keep the stride.
+			{
+				vec3 subsampledDepthPoint = vec3(
+					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					backParticleDepths[x + (y * particleArrayWidth)]);
+
+				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+
+				*backPositionsVBO++ = worldPos;
+				*backScalesVBO++ = backParticleScales[x + (y * particleArrayWidth)];
+				backNumberToDraw++;
+			}
+		}
+	}
 }
 
 void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud)
