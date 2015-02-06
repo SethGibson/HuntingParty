@@ -25,6 +25,7 @@
 #include "nanoflann.hpp"
 #include <random>
 #include <tuple>
+#include "cinder/gl/gl.h"
 
 
 using namespace ci;
@@ -53,17 +54,18 @@ enum BackParticleSetting
 	Mountainous
 };
 
-const static int MaxNumberDyingParticleBufferSize = 150000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
-const static float DeathLifetimeInSeconds = 3.5; //total time until dying particle instances expire
-const static int SecondsBetweenNewSpawns = 0.5;
-const static int DepthSubsampleWindowSize = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
-const static int VariableCap = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
-const static int DesiredEdgeNumCap = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
+const static int MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE = 150000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
+const static float DEATH_LIFETIME_IN_SECONDS = 3.5; //total time until dying particle instances expire
+const static int SECONDS_BETWEEN_NEW_SPAWNS = 0.5;
+const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
+const static int VARIABLE_CAP = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
+const static int DESIRED_EDGE_NUM_CAP = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
 
 int width;
 int height;
 int numberToDraw = 0;
 int backNumberToDraw = 0;
+int numberTrianglesToDraw = 0;
 float GravityForceMultiplier = 9.8;
 float ForwardForceMultiplier = 1;
 uint32_t previousTotalDepth = 0;
@@ -99,7 +101,7 @@ public:
 
 	bool AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
 	{
-		if (CurrentTotalParticles + particles.size() <= MaxNumberDyingParticleBufferSize)
+		if (CurrentTotalParticles + particles.size() <= MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)
 		{
 			CurrentTotalParticles += particles.size();
 
@@ -113,7 +115,7 @@ public:
 
 	void CleanupUpdate(float currentTime)
 	{
-		while (BatchCreationTime.empty() == false && BatchCreationTime.front() + DeathLifetimeInSeconds < currentTime)
+		while (BatchCreationTime.empty() == false && BatchCreationTime.front() + DEATH_LIFETIME_IN_SECONDS < currentTime)
 		{
 			KillFrontParticleBatch();
 		}
@@ -184,7 +186,7 @@ public:
 	void mouseDown(MouseEvent event) override;
 	void mouseDrag(MouseEvent event) override;
 
-	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed, BackParticleSetting backSetting);
+	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, float elapsed, BackParticleSetting backSetting);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
 
@@ -195,19 +197,29 @@ public:
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
 	gl::BatchRef		mBatchDyingCubes;
+	gl::BatchRef		mBatchBackubes;
+	gl::BatchRef		mBatchTriangles;
+
 	gl::TextureRef		mTexture;
+
 	gl::GlslProgRef		mGlsl;
 	gl::GlslProgRef		mGlslDyingCubes;
+	gl::GlslProgRef		mGlslBackCubes;
+	gl::GlslProgRef		mGlslTriangles;
+
 	gl::VboRef			mInstancePositionVbo;
 	gl::VboRef			mInstanceScaleVbo;
+
 	gl::VboRef			mInstanceDyingDataVbo;
 	gl::VboRef			mInstanceDyingScaleVbo;
 	gl::VboRef			mInstanceDyingTotalLifetimesVbo;
+
+	gl::VboRef			mInstanceBackPositionVbo;
 	gl::VboRef			mInstanceFillerScaleVbo;
 
-	gl::BatchRef		mBatchBackubes;
-	gl::GlslProgRef		mGlslBackCubes;
-	gl::VboRef			mInstanceBackPositionVbo;
+	gl::VboRef			mTrianglePositionsVbo;
+	gl::VboRef			mTriangleIndicesVbo;
+	gl::VboMeshRef		mTrianglesVboMesh;
 
 	//DSAPI
 	CinderDSRef mDSAPI;
@@ -240,12 +252,16 @@ public:
 
 	int mDepthSubsampleSize;
 	BackParticleSetting currentParticleSetting = BackParticleSetting::ShatteredGlass;
+	bool DrawBackParticles = true;
+	bool DrawDyingParticles = true;
+	bool DrawFrontParticles = true;
+	bool DrawTriangles = false;
 };
 
 
 void HP_WaitingRTApp::setup()
 {
-	mDepthSubsampleSize = DepthSubsampleWindowSize;
+	mDepthSubsampleSize = DEPTH_SUBSAMPLE_WINDOW_SIZE;
 
 	//out = std::ofstream("output.txt");
 
@@ -281,6 +297,7 @@ void HP_WaitingRTApp::setup()
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
 	mGlslDyingCubes = gl::GlslProg::create(loadAsset("shaderDying.vert"), loadAsset("shaderDying.frag"));
 	mGlslBackCubes = gl::GlslProg::create(loadAsset("shaderBack.vert"), loadAsset("shaderBack.frag"));
+	mGlslTriangles = gl::GlslProg::create(loadAsset("shaderTriangles.vert"), loadAsset("shaderTriangles.frag"));
 #else
 	mGlsl = gl::GlslProg::create(loadAsset("shader_es2.vert"), loadAsset("shader_es2.frag"));
 #endif
@@ -294,9 +311,11 @@ void HP_WaitingRTApp::setup()
 	std::vector<vec3> backPositions;
 	std::vector<float> cubeScales;
 	std::vector<float> fillerScales;
-	std::vector<vec3> deathPositions = std::vector<vec3>(MaxNumberDyingParticleBufferSize);
-	std::vector<float> deathTotalLifetimes = std::vector<float>(MaxNumberDyingParticleBufferSize);
-	std::vector<float> dyingScales = std::vector<float>(MaxNumberDyingParticleBufferSize);
+	std::vector<vec3> deathPositions = std::vector<vec3>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
+	std::vector<float> deathTotalLifetimes = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
+	std::vector<float> dyingScales = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
+	std::vector<vec3> trianglePositions;
+	std::vector<uint16_t> triangleIndices;
 	for (size_t potX = 0; potX < width; ++potX) {
 		for (size_t potY = 0; potY < height; ++potY) {
 			float instanceX = potX / (float)width - 0.5f;
@@ -304,6 +323,7 @@ void HP_WaitingRTApp::setup()
 			vec3 pos = vec3(instanceX * vec3(1, 0, 0) + instanceY * vec3(0, 0, 1));
 			positions.push_back(pos);
 			backPositions.push_back(pos);
+			trianglePositions.push_back(pos);
 
 			cubeScales.push_back(randFloat(0.2, 5));
 			fillerScales.push_back(randFloat(0.2, 5));
@@ -311,6 +331,8 @@ void HP_WaitingRTApp::setup()
 			mPreviouslyHadDepth.push_back(false);
 			mCurrentlyHasDyingInstance.push_back(false);
 			mPreviousValidDepthCoord.push_back(pos);
+
+			triangleIndices.resize(triangleIndices.size() + 12, 0); //+12 because 3 indices per triangle, 4 triangles (up/down/left/right) per pixel.
 		}
 	}
 
@@ -323,11 +345,12 @@ void HP_WaitingRTApp::setup()
 	// create the VBO which will contain per-instance (rather than per-vertex) data
 	mInstancePositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_DYNAMIC_DRAW);
 	mInstanceScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, cubeScales.size() * sizeof(float), cubeScales.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize) * sizeof(float), dyingScales.data(), GL_DYNAMIC_DRAW);
-	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MaxNumberDyingParticleBufferSize)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingDataVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)* sizeof(vec3), deathPositions.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)* sizeof(float), dyingScales.data(), GL_DYNAMIC_DRAW);
+	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
+	mTrianglePositionsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, trianglePositions.size() * sizeof(vec3), trianglePositions.data(), GL_DYNAMIC_DRAW);
 
 	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
 	geom::BufferLayout instanceDataLayout;
@@ -342,7 +365,6 @@ void HP_WaitingRTApp::setup()
 
 	// and finally, build our batch, mapping our CUSTOM_0 attribute to the "vInstancePosition" GLSL vertex attribute
 	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
-
 
 	geom::BufferLayout instanceDyingScaleLayout;
 	instanceDyingScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
@@ -372,6 +394,25 @@ void HP_WaitingRTApp::setup()
 	mBatchBackubes = gl::Batch::create(meshBack, mGlslBackCubes, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
 
 
+
+
+		//3 indices for each triangle, 2 triangles for each pixel in the buffer (up/down/left/right)
+	mTriangleIndicesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, trianglePositions.size() * 3 * 2 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
+
+	geom::BufferLayout trianglePositionsLayout;
+	trianglePositionsLayout.append(geom::Attrib::POSITION, 3, 0, 0, 0);
+
+	pair<geom::BufferLayout, gl::VboRef> myPair(trianglePositionsLayout, mTrianglePositionsVbo);
+	std::vector<std::pair<geom::BufferLayout, gl::VboRef>> triangleRefVec;
+	triangleRefVec.push_back(myPair);
+	mTrianglesVboMesh = gl::VboMesh::create(
+		(uint32_t)trianglePositions.size(), GL_TRIANGLES, triangleRefVec, (uint32_t)trianglePositions.size() * 3 * 2, GL_UNSIGNED_INT16_VEC3_NV, mTriangleIndicesVbo);
+	mBatchTriangles = gl::Batch::create(mTrianglesVboMesh, mGlslTriangles);
+
+
+
+
+
 	gl::enableDepthWrite();
 	gl::enableDepthRead();
 	gl::enableAlphaBlending();
@@ -396,6 +437,53 @@ void HP_WaitingRTApp::resize()
 	// and in turn, let OpenGL know we have a new camera
 	gl::setMatrices(mCam);
 }
+//first is the depth value, second is the index (only set if depth value is valid)
+template <typename T>
+std::vector<pair<bool, uint16_t>> getSquareFromTopLeft(std::vector<T> depthData, int x, int y, int w, int h, float farClipZ)
+{
+	std::vector<pair<bool, uint16_t>> window = { { false, 0 }, { false, 0 }, { false, 0 }, { false, 0 } };
+
+	window[0].first = depthData[x + (y * w)] != 0 && depthData[x + (y * w)] < farClipZ; //set to the top left pixel
+	window[0].second = x + (y * w);
+
+	if (x == w - 1 && y == h - 1) //bottom right
+	{
+		window[1].first = false;
+		window[2].first = false;
+		window[3].first = false;
+	}
+	else if (x == w - 1 || y == h - 1) //bottom right)
+	{
+		if (x == w - 1) //right
+		{
+			window[1].first = false;
+			window[2].first = depthData[x + ((y + 1) * w)] != 0 && depthData[x + ((y + 1) * w)] < farClipZ;
+			window[2].second = x + ((y + 1) * w);
+			window[3].first = false;
+		}
+
+		if (y == h - 1) //bottom
+		{
+			window[1].first = depthData[(x + 1) + (y * w)] != 0 && depthData[(x + 1) + (y * w)] < farClipZ;
+			window[1].second = (x + 1) + (y * w);
+			window[2].first = false;
+			window[3].first = false;
+		}
+	}
+	else
+	{
+		window[1].first = depthData[(x + 1) + (y * w)] != 0 && depthData[(x + 1) + (y * w)] < farClipZ;
+		window[1].second = (x + 1) + (y * w);
+		window[2].first = depthData[x + ((y + 1) * w)] != 0 && depthData[x + ((y + 1) * w)] < farClipZ;
+		window[2].second = x + ((y + 1) * w);
+		window[3].first = depthData[(x + 1) + ((y + 1) * w)] != 0 && depthData[(x + 1) + ((y + 1) * w)] < farClipZ;
+		window[3].second = (x + 1) + ((y + 1) * w);
+	}
+
+
+	return window;
+}
+
 
 void HP_WaitingRTApp::update()
 {
@@ -421,7 +509,10 @@ void HP_WaitingRTApp::update()
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
 	float *totalLivingTimes = (float*)mInstanceDyingTotalLifetimesVbo->mapWriteOnly(true);
 
-	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, elapsed, currentParticleSetting);
+	vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->mapWriteOnly(true);
+	uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->mapWriteOnly(true);
+
+	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, trianglePositions, trangleIndices, elapsed, currentParticleSetting);
 
 
 	mInstancePositionVbo->unmap();
@@ -431,29 +522,20 @@ void HP_WaitingRTApp::update()
 	mInstanceBackPositionVbo->unmap();
 	mInstanceDyingScaleVbo->unmap();
 	mInstanceFillerScaleVbo->unmap();
+
+	mTrianglePositionsVbo->unmap();
+	mTriangleIndicesVbo->unmap();
 }
 
 //Given mapped buffers, set up all the particles for drawing.
-void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed, BackParticleSetting backSetting)
+void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, float elapsed, BackParticleSetting backSetting)
 {
 	numberToDraw = 0;
 	backNumberToDraw = 0;
+	numberTrianglesToDraw = 0;
 
 	std::vector<ParticleInstance> dyingParticlesToAdd = std::vector<ParticleInstance>();
 	std::unordered_map<int, std::vector<ParticleInstance>> dyingGlassBins = std::unordered_map<int, std::vector<ParticleInstance>>(); //Z-value with all x/y integer coords (unmapped) of dying particles associated.
-
-	/*
-	// If you want const qualified access
-	auto it = dyingGlassBins.find(5);
-	if (it != end(dyingGlassBins))
-	{
-		const auto & val = it->second; // is the value
-	}
-
-	// If you happen to have a mutable map
-	dyingGlassBins[5].push_back({ 1, 2 });
-	*/
-	
 
 	std::vector<float> backParticleDepthsToAdd = std::vector<float>();
 	std::vector<float> backParticleScalesToAdd = std::vector<float>();
@@ -465,7 +547,6 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	std::vector<uint16_t> subsampledDepths = GetSuperPixelAverageDepths(mDepthBuffer.getDataStore().get(), width, height, mDepthSubsampleSize);
 	int subsampledWidth = width / mDepthSubsampleSize;
 	int subsampledHeight = height / mDepthSubsampleSize;
-
 
 	/* CANNY EDGE BUILDING */
 	EdgeCloud<int> edgeCloud; //pass as reference to fill the "edges" array
@@ -486,7 +567,39 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	for (int y = 0; y < subsampledHeight; y++)
 	{
 		for (int x = 0; x < subsampledWidth; x++)
-		{
+		{			
+			if (DrawTriangles)
+			{
+				vec3 trianglePoint = vec3(
+					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					subsampledDepths[x + (y * subsampledWidth)]);
+				vec3 p = mDSAPI->getDepthSpacePoint(trianglePoint);
+				*trianglePositions++ = p;
+				std::vector<pair<bool, uint16_t>> windowFromTopLeft = getSquareFromTopLeft<uint16_t>(subsampledDepths, x, y, subsampledWidth, subsampledHeight, mCam.getFarClip());
+				if (windowFromTopLeft[2].first &&
+					windowFromTopLeft[1].first &&
+					windowFromTopLeft[0].first)
+				{
+					*triangleIndices++ = windowFromTopLeft[2].second;
+					*triangleIndices++ = windowFromTopLeft[1].second;
+					*triangleIndices++ = windowFromTopLeft[0].second;
+
+					numberTrianglesToDraw++;
+				}
+				if (windowFromTopLeft[2].first &&
+					windowFromTopLeft[3].first &&
+					windowFromTopLeft[1].first)
+				{
+					*triangleIndices++ = windowFromTopLeft[2].second;
+					*triangleIndices++ = windowFromTopLeft[3].second;
+					*triangleIndices++ = windowFromTopLeft[1].second;
+
+					numberTrianglesToDraw++;
+				}
+			}
+			
+
 			float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
 			bool cannyEdgePixel = (cannyEdgePixels.data[x + (subsampledWidth * y)] != 0);
 
@@ -552,6 +665,8 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 						additionalZ = zDiff * 2;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
 						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor); //calculate this early
 
+						finalZ = axisZ;
+
 						if (mCurrentlyHasDyingInstance[x + (y * subsampledWidth)] == false)
 						{
 							//store the subsampledDepthMap INDEX of the z position being using (i.e. mapping an initial position to which edge pixel it used)
@@ -563,19 +678,20 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 						break;
 					case BackParticleSetting::AveragedShatteredGlass:
 						additionalZ = zDiff;  /* MULTIPLY zDiff by 2 TO GET MIRROR */
+						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor);
 						break;
 					case BackParticleSetting::Mountainous:
 						float lerpPercent;
 						lerpPercent = (math<float>::clamp(lmap<float>(math<float>::sqrt(out_dist_sqr[0]), 0, 100, 0, 1.5), 0, 1.5));
 						float s = math<float>::sin(lerpPercent);
 						additionalZ = silhouetteZOffset * (s * s);
+						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor);
 						break;
 					}
 
 					if (spawnBackParticle)
 					{
 						float backScale = 2;
-						finalZ = subsampledAverageDepth + (additionalZ * zAddMultiplyFactor);
 						backParticleDepthsToAdd.push_back(finalZ);
 						backParticleScalesToAdd.push_back(backScale);
 					}
@@ -596,7 +712,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 				if (dyingGlassBins.empty() &&
 					currentParticleSetting != BackParticleSetting::ShatteredGlass && //If this isn't empty, then it should trump normal dying particles.
 					cannyEdgePixel &&
-					mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MaxNumberDyingParticleBufferSize &&
+					mDyingParticleManager.CurrentTotalParticles + dyingParticlesToAdd.size() < MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE &&
 					mPreviouslyHadDepth[x + (y * subsampledWidth)]) //there was depth and it just died
 				{
 					dyingParticlesToAdd.push_back(ParticleInstance(mPreviousValidDepthCoord[x + (y * subsampledWidth)], vec2(x, y), elapsed));
@@ -618,7 +734,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	{
 		for (auto it = dyingGlassBins.begin(); it != dyingGlassBins.end(); ++it)
 		{
-			if (it->second.size() > DepthSubsampleWindowSize * DepthSubsampleWindowSize * 4 && randBool())
+			if (it->second.size() > (8.0f / max(1.0f, min(3.0f, lmap<float>(it->second[0].InitialPosition.z, 1.0f, 3.0f, 1000, 3000)))) * 8 / mDepthSubsampleSize * 8 / mDepthSubsampleSize && randBool())
 				mDyingParticleManager.AddDyingParticleBatch(it->second, elapsed);
 		}
 	}
@@ -635,6 +751,34 @@ void HP_WaitingRTApp::draw()
 {
 	gl::clear(Color::black());
 
+	if (DrawTriangles)
+	{
+		vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->map(GL_READ_ONLY);
+		uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
+
+		gl::begin(GL_TRIANGLES);
+		for (int i = 0; i < numberTrianglesToDraw; i++)
+		{
+			//vec3 ab(trianglePositions[trangleIndices[(i * 3) + 1]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
+			//vec3 ac(trianglePositions[trangleIndices[(i * 3) + 2]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
+			//vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
+			//dx::normal(n.x, n.y, n.z);
+			vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
+			vec3 b = trianglePositions[trangleIndices[(i * 3) + 1]];
+			vec3 c = trianglePositions[trangleIndices[(i * 3) + 2]];
+			float averageDepth = (a.z + b.z + c.z) / 3;
+			averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
+			gl::color(averageDepth, averageDepth, averageDepth, 0.75);
+
+			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 0]]);
+			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 1]]);
+			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 2]]);
+		}
+		gl::end();
+
+		mTrianglePositionsVbo->unmap();
+		mTriangleIndicesVbo->unmap();
+	}
 
 	gl::setMatrices(mMayaCam.getCamera());
 
@@ -643,27 +787,46 @@ void HP_WaitingRTApp::draw()
 	//glm::mat4 blah = glm::rotate((float)(abs(cos(getElapsedSeconds() / 8)) * 180), glm::vec3(0, 0, 1));
 	glm::mat4 blah;
 
-	mGlsl->bind();
-	mGlsl->uniform("rotationMatrix", blah);
+	if (DrawBackParticles)
+	{
+		mGlslBackCubes->bind();
+		mGlslBackCubes->uniform("rotationMatrix", blah);
 
-	mGlslDyingCubes->bind();
-	mGlslDyingCubes->uniform("rotationMatrix", blah);
+		mBatchBackubes->drawInstanced(backNumberToDraw);
+	}
+	if (DrawDyingParticles)
+	{
+		mGlslDyingCubes->bind();
+		mGlslDyingCubes->uniform("rotationMatrix", blah);
 
-	mGlslBackCubes->bind();
-	mGlslBackCubes->uniform("rotationMatrix", blah);
+		mGlslDyingCubes->bind();
+		mGlslDyingCubes->uniform("MaxLifetime", DEATH_LIFETIME_IN_SECONDS);
 
-	mGlslDyingCubes->bind();
-	mGlslDyingCubes->uniform("MaxLifetime", DeathLifetimeInSeconds);
+		mGlslDyingCubes->bind();
+		mGlslDyingCubes->uniform("Gravity", GravityForceMultiplier);
 
-	mGlslDyingCubes->bind();
-	mGlslDyingCubes->uniform("Gravity", GravityForceMultiplier);
+		mGlslDyingCubes->bind();
+		mGlslDyingCubes->uniform("ForwardForceMult", 1); // ForwardForceMultiplier); /* COMMENTED OUT FOR NOW, NEEDS LERP! */
 
-	mGlslDyingCubes->bind();
-	mGlslDyingCubes->uniform("ForwardForceMult", 1); // ForwardForceMultiplier); /* COMMENTED OUT FOR NOW, NEEDS LERP! */
+		mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
+	}
+	if (DrawFrontParticles)
+	{
+		mGlsl->bind();
+		mGlsl->uniform("rotationMatrix", blah);
 
-	mBatchBackubes->drawInstanced(backNumberToDraw);
-	mBatchDyingCubes->drawInstanced(mDyingParticleManager.CurrentTotalParticles);
-	mBatch->drawInstanced(numberToDraw);
+		mBatch->drawInstanced(numberToDraw);
+	}
+
+	//if (DrawTriangles)
+	//{
+		//mGlslTriangles->bind();
+		//mGlslTriangles->uniform("rotationMatrix", blah);
+
+		//mBatchTriangles->drawInstanced(numberTrianglesToDraw);
+	//}
+
+
 
 	//console() << numberToDraw << endl;
 }
@@ -712,6 +875,21 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 	}
 	else if (event.getChar() == 'c'){
 		currentParticleSetting = BackParticleSetting::Mountainous;
+	}
+	else if (event.getChar() == 'v'){
+		GravityForceMultiplier = -GravityForceMultiplier;
+	}
+	else if (event.getChar() == 'a'){
+		DrawBackParticles = !DrawBackParticles;
+	}
+	else if (event.getChar() == 's'){
+		DrawDyingParticles = !DrawDyingParticles;
+	}
+	else if (event.getChar() == 'd'){
+		DrawFrontParticles = !DrawFrontParticles;
+	}
+	else if (event.getChar() == 'f'){
+		//DrawTriangles = !DrawTriangles;
 	}
 }
 
@@ -807,7 +985,7 @@ std::vector<uint16_t> HP_WaitingRTApp::GetSuperPixelAverageDepths(uint16_t* dept
 				}
 			}
 
-			if (windowPixels.size() == 0 || highestDepth - lowestDepth > VariableCap)
+			if (windowPixels.size() == 0 || highestDepth - lowestDepth > VARIABLE_CAP)
 			{
 				averages[((topLeftY / orthant_height) * (width / orthant_width)) + (topLeftX / orthant_width)] = 0;
 			}
@@ -1135,13 +1313,13 @@ void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int d
 	}
 
 
-	if (validEdges.size() <= DesiredEdgeNumCap)
+	if (validEdges.size() <= DESIRED_EDGE_NUM_CAP)
 	{
 		edgeCloud.edges = validEdges;
 	}
 	else //decimate to desired number of edges
 	{
-		for (int i = 0; i < validEdges.size(); i += validEdges.size() / DesiredEdgeNumCap)
+		for (int i = 0; i < validEdges.size(); i += validEdges.size() / DESIRED_EDGE_NUM_CAP)
 		{
 			edgeCloud.edges.push_back(validEdges[i]);
 		}
