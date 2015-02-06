@@ -397,7 +397,7 @@ void HP_WaitingRTApp::setup()
 
 
 		//3 indices for each triangle, 2 triangles for each pixel in the buffer (up/down/left/right)
-	mTriangleIndicesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, trianglePositions.size() * 3 * 2 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
+	mTriangleIndicesVbo = gl::Vbo::create(GL_ELEMENT_ARRAY_BUFFER, trianglePositions.size() * 3 * 2 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
 
 	geom::BufferLayout trianglePositionsLayout;
 	trianglePositionsLayout.append(geom::Attrib::POSITION, 3, 0, 0, 0);
