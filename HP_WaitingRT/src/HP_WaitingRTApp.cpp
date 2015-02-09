@@ -221,6 +221,8 @@ public:
 	gl::VboRef			mTriangleIndicesVbo;
 	gl::VboMeshRef		mTrianglesVboMesh;
 
+	gl::TextureRef		mLogoTexture;
+
 	//DSAPI
 	CinderDSRef mDSAPI;
 	MayaCamUI mMayaCam;
@@ -293,6 +295,7 @@ void HP_WaitingRTApp::setup()
 	mMayaCam = MayaCamUI(mCam);
 
 	mTexture = gl::Texture::create(loadImage(loadAsset("texture.jpg")), gl::Texture::Format().mipmap());
+	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo.png")));
 #if ! defined( CINDER_GL_ES )
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
 	mGlslDyingCubes = gl::GlslProg::create(loadAsset("shaderDying.vert"), loadAsset("shaderDying.frag"));
