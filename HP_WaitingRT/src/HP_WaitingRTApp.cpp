@@ -295,7 +295,7 @@ void HP_WaitingRTApp::setup()
 	mMayaCam = MayaCamUI(mCam);
 
 	mTexture = gl::Texture::create(loadImage(loadAsset("texture.jpg")), gl::Texture::Format().mipmap());
-	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo.png")));
+	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo.jpg")));
 #if ! defined( CINDER_GL_ES )
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
 	mGlslDyingCubes = gl::GlslProg::create(loadAsset("shaderDying.vert"), loadAsset("shaderDying.frag"));
@@ -420,7 +420,8 @@ void HP_WaitingRTApp::setup()
 	gl::enableDepthRead();
 	gl::enableAlphaBlending();
 
-	mTexture->bind();
+	mTexture->bind(0);
+	mLogoTexture->bind(1);
 
 	previousElapsedTime = getElapsedSeconds();
 }
@@ -818,8 +819,26 @@ void HP_WaitingRTApp::draw()
 		mGlsl->bind();
 		mGlsl->uniform("rotationMatrix", blah);
 
+		mGlsl->bind();
+
+		glActiveTexture(GL_TEXTURE0);
+		gl::ScopedTextureBind cubeTex(mTexture);
+		mGlsl->uniform("uTex0", 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		gl::ScopedTextureBind logoTex(mLogoTexture);
+		mGlsl->uniform("uLogoTex", 1);
+
+		glActiveTexture(GL_TEXTURE0);
+
+		//mTexture->bind(0);
+		//mGlsl->uniform("uTex0", 0);
+		//mLogoTexture->bind(1);
+		//mGlsl->uniform("logoTex", 1);
+
 		mBatch->drawInstanced(numberToDraw);
 	}
+
 
 	//if (DrawTriangles)
 	//{

@@ -1,8 +1,8 @@
 #version 150
 
-uniform mat4	ciModelViewProjection;
-uniform mat3	ciNormalMatrix;
-uniform mat4	rotationMatrix;
+uniform mat4		ciModelViewProjection;
+uniform mat3		ciNormalMatrix;
+uniform mat4		rotationMatrix;
 
 in vec4		ciPosition;
 in vec2		ciTexCoord0;
@@ -13,6 +13,8 @@ in float	fCubeScale;
 
 out vec3 Position; // In world space
 
+out vec2		ScreenPos;
+out vec2		InstanceXY;
 out vec2		TexCoord;
 out lowp vec4	Color;
 out vec3		Normal;
@@ -66,11 +68,15 @@ vec3 HSLToRGB(vec3 hsl)
 void main( void )
 {
 	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * ciPosition)).xyz, ciPosition.w) + vec4( vInstancePosition, 0 ) );
+
+	ScreenPos = ((gl_Position.xy / gl_Position.w) + 1) / 2;
+
 	float normalizedMappedZ = 0 + (1 - 0) * ((vInstancePosition.z - 100) / (2500 - 100));
 	Color 		=  vec4(
 						0.4, 0.4, 0.4,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
 						1.0
 					   );
+	InstanceXY = vec2(vInstancePosition.x, vInstancePosition.y);
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }
