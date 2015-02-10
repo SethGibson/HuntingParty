@@ -76,7 +76,7 @@ void main( void )
 						0.4, 0.4, 0.4,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
 						1.0
 					   );
-	InstanceXY = vec2(vInstancePosition.x, vInstancePosition.y);
+	InstanceXY	= vec2(vInstancePosition.x, vInstancePosition.y);
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }

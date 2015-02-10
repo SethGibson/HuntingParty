@@ -54,7 +54,7 @@ enum BackParticleSetting
 	Mountainous
 };
 
-const static int MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE = 150000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
+const static int MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE = 75000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
 const static float DEATH_LIFETIME_IN_SECONDS = 3.5; //total time until dying particle instances expire
 const static int SECONDS_BETWEEN_NEW_SPAWNS = 0.5;
 const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
@@ -258,6 +258,7 @@ public:
 	bool DrawDyingParticles = true;
 	bool DrawFrontParticles = true;
 	bool DrawTriangles = false;
+	bool MaskFrontParticles = false;
 };
 
 
@@ -294,7 +295,7 @@ void HP_WaitingRTApp::setup()
 
 	mMayaCam = MayaCamUI(mCam);
 
-	mTexture = gl::Texture::create(loadImage(loadAsset("texture.jpg")), gl::Texture::Format().mipmap());
+	mTexture = gl::Texture::create(loadImage(loadAsset("blank_texture.png")), gl::Texture::Format().mipmap());
 	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo.jpg")));
 #if ! defined( CINDER_GL_ES )
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
@@ -305,9 +306,9 @@ void HP_WaitingRTApp::setup()
 	mGlsl = gl::GlslProg::create(loadAsset("shader_es2.vert"), loadAsset("shader_es2.frag"));
 #endif
 
-	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Cube());
+	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Sphere().subdivisions(4));
 	gl::VboMeshRef meshDying = gl::VboMesh::create(geom::Cone().subdivisionsAxis(4));
-	gl::VboMeshRef meshBack = gl::VboMesh::create(geom::Sphere().subdivisions(4));
+	gl::VboMeshRef meshBack = gl::VboMesh::create(geom::Cube());
 
 	// create an array of initial per-instance positions laid out in a 2D grid
 	std::vector<vec3> positions;
@@ -409,7 +410,7 @@ void HP_WaitingRTApp::setup()
 	std::vector<std::pair<geom::BufferLayout, gl::VboRef>> triangleRefVec;
 	triangleRefVec.push_back(myPair);
 	mTrianglesVboMesh = gl::VboMesh::create(
-		(uint32_t)trianglePositions.size(), GL_TRIANGLES, triangleRefVec, (uint32_t)trianglePositions.size() * 3 * 2, GL_UNSIGNED_INT16_VEC3_NV, mTriangleIndicesVbo);
+		(uint32_t)trianglePositions.size(), GL_TRIANGLES, triangleRefVec, (uint32_t)trianglePositions.size() * 3 * 2, GL_UNSIGNED_SHORT, mTriangleIndicesVbo);
 	mBatchTriangles = gl::Batch::create(mTrianglesVboMesh, mGlslTriangles);
 
 
@@ -695,7 +696,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 					if (spawnBackParticle)
 					{
-						float backScale = 2;
+						float backScale = 0.75;
 						backParticleDepthsToAdd.push_back(finalZ);
 						backParticleScalesToAdd.push_back(backScale);
 					}
@@ -738,7 +739,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	{
 		for (auto it = dyingGlassBins.begin(); it != dyingGlassBins.end(); ++it)
 		{
-			if (it->second.size() > (8.0f / max(1.0f, min(3.0f, lmap<float>(it->second[0].InitialPosition.z, 1.0f, 3.0f, 1000, 3000)))) * 8 / mDepthSubsampleSize * 8 / mDepthSubsampleSize && randBool())
+			if (it->second.size() > (8.0f / max(1.0f, min(3.0f, lmap<float>(it->second[0].InitialPosition.z, 1.0f, 3.0f, 1000, 3000)))) * 8 / mDepthSubsampleSize * 8 / mDepthSubsampleSize && randFloat(0.0, 1.0) < 0.1) //&& 1/10 the time.
 				mDyingParticleManager.AddDyingParticleBatch(it->second, elapsed);
 		}
 	}
@@ -760,19 +761,50 @@ void HP_WaitingRTApp::draw()
 		vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->map(GL_READ_ONLY);
 		uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
 
+		//GLuint positions;
+		//glGenBuffers(1, &positions);
+		//glBindBuffer(GL_ARRAY_BUFFER, positions);
+		//glBufferData(GL_ARRAY_BUFFER, numberTrianglesToDraw * sizeof(vec3), trianglePositions, GL_DYNAMIC_DRAW);
+
+		//GLuint indices;
+		//glGenBuffers(1, &indices);
+		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+		//glBufferData(GL_ELEMENT_ARRAY_BUFFER, numberTrianglesToDraw * 3 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
+
+		//
+		//glUseProgram(mGlsl->getHandle());
+		//
+
+		//glBindBuffer(GL_ARRAY_BUFFER, positions);
+		//glVertexAttribPointer(positions, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), trianglePositions);
+		//glEnableVertexAttribArray(positions);
+
+		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+		//glVertexAttribPointer(indices, 3, GL_FLOAT, GL_FALSE, sizeof(uint16_t), trangleIndices);
+		//glVertexAttribDivisor(indices, 3);
+		//glEnableVertexAttribArray(indices);
+
+		//glDrawElements(GL_TRIANGLES, numberTrianglesToDraw, GL_UNSIGNED_SHORT, trangleIndices);
+		//glDeleteBuffers(1, &indices);
+		//glDeleteBuffers(1, &positions);
+
+
+		////mTriangleIndicesVbo->bufferData(numberTrianglesToDraw * 3 * 2 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
+
 		gl::begin(GL_TRIANGLES);
 		for (int i = 0; i < numberTrianglesToDraw; i++)
 		{
-			//vec3 ab(trianglePositions[trangleIndices[(i * 3) + 1]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
-			//vec3 ac(trianglePositions[trangleIndices[(i * 3) + 2]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
-			//vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
-			//dx::normal(n.x, n.y, n.z);
-			vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
-			vec3 b = trianglePositions[trangleIndices[(i * 3) + 1]];
-			vec3 c = trianglePositions[trangleIndices[(i * 3) + 2]];
-			float averageDepth = (a.z + b.z + c.z) / 3;
-			averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
-			gl::color(averageDepth, averageDepth, averageDepth, 0.75);
+			vec3 ab(trianglePositions[trangleIndices[(i * 3) + 1]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
+			vec3 ac(trianglePositions[trangleIndices[(i * 3) + 2]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
+			vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
+			
+			//vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
+			//vec3 b = trianglePositions[trangleIndices[(i * 3) + 1]];
+			//vec3 c = trianglePositions[trangleIndices[(i * 3) + 2]];
+			//float averageDepth = (a.z + b.z + c.z) / 3;
+			//averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
+			//gl::color(averageDepth, averageDepth, averageDepth, 0.75);
+			
 
 			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 0]]);
 			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 1]]);
@@ -820,6 +852,9 @@ void HP_WaitingRTApp::draw()
 		mGlsl->uniform("rotationMatrix", blah);
 
 		mGlsl->bind();
+		mGlsl->uniform("UseMaskTexture", MaskFrontParticles);
+
+		mGlsl->bind();
 
 		glActiveTexture(GL_TEXTURE0);
 		gl::ScopedTextureBind cubeTex(mTexture);
@@ -830,11 +865,6 @@ void HP_WaitingRTApp::draw()
 		mGlsl->uniform("uLogoTex", 1);
 
 		glActiveTexture(GL_TEXTURE0);
-
-		//mTexture->bind(0);
-		//mGlsl->uniform("uTex0", 0);
-		//mLogoTexture->bind(1);
-		//mGlsl->uniform("logoTex", 1);
 
 		mBatch->drawInstanced(numberToDraw);
 	}
@@ -911,7 +941,10 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 		DrawFrontParticles = !DrawFrontParticles;
 	}
 	else if (event.getChar() == 'f'){
-		//DrawTriangles = !DrawTriangles;
+		MaskFrontParticles = !MaskFrontParticles;
+	}
+	else if (event.getChar() == 'g'){
+		DrawTriangles = !DrawTriangles;
 	}
 }
 
