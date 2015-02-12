@@ -267,9 +267,23 @@ namespace CinderDS
 		return vec2(cFovX, cFovY);
 	}
 
-	DSAPIRef CinderDSAPI::getDSAPI()
+	const DSAPIRef CinderDSAPI::getDSAPI()
 	{
 		return mDSAPI;
+	}
+
+	DSThird* CinderDSAPI::getDSThird()
+	{
+		return mDSRGB;
+	}
+
+	const DSCalibIntrinsicsRectified CinderDSAPI::getZIntrinsics()
+	{
+		return mZIntrinsics;
+	}
+	const DSCalibIntrinsicsRectified CinderDSAPI::getRgbIntrinsics()
+	{
+		return mRgbIntrinsics;
 	}
 
 	bool CinderDSAPI::open()

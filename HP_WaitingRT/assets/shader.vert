@@ -73,7 +73,7 @@ void main( void )
 
 	float normalizedMappedZ = 0 + (1 - 0) * ((vInstancePosition.z - 100) / (2500 - 100));
 	Color 		=  vec4(
-						0.4, 0.4, 0.4,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
+						0.6, 0.6, 0.6,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
 						1.0
 					   );
 	InstanceXY	= vec2(vInstancePosition.x, vInstancePosition.y);

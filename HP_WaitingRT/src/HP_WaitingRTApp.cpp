@@ -186,7 +186,7 @@ public:
 	void mouseDown(MouseEvent event) override;
 	void mouseDrag(MouseEvent event) override;
 
-	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, float elapsed, BackParticleSetting backSetting);
+	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, vec4 *triangleColors, float elapsed, BackParticleSetting backSetting);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
 
@@ -219,6 +219,7 @@ public:
 
 	gl::VboRef			mTrianglePositionsVbo;
 	gl::VboRef			mTriangleIndicesVbo;
+	gl::VboRef			mTriangleColorsVbo;
 	gl::VboMeshRef		mTrianglesVboMesh;
 
 	gl::TextureRef		mLogoTexture;
@@ -229,6 +230,9 @@ public:
 
 	Surface8u mRgbBuffer;
 	Channel16u mDepthBuffer;
+
+	DSCalibIntrinsicsRectified zIntrin, thirdIntrin;
+	double zToThirdTrans[3];
 
 	std::vector<bool> mPreviouslyHadDepth;
 	std::vector<bool> mCurrentlyHasDyingInstance;
@@ -290,13 +294,19 @@ void HP_WaitingRTApp::setup()
 
 	//mCam.lookAt(vec3(0, CAMERA_Y_RANGE.first, 0), vec3(0));
 	vec2 cFOVs = mDSAPI->getDepthFOVs();
+
+	mDSAPI->getDSAPI()->getCalibIntrinsicsZ(zIntrin);
+	mDSAPI->getDSThird()->getCalibIntrinsicsRectThird(thirdIntrin);
+	mDSAPI->getDSThird()->getCalibExtrinsicsZToRectThird(zToThirdTrans);
+
+
 	mCam.setPerspective(cFOVs.y, getWindowAspectRatio(), 100, 2500);
 	mCam.lookAt(vec3(0, 0, 0), vec3(0, 0, 1000), vec3(0, -1, 0));
 
 	mMayaCam = MayaCamUI(mCam);
 
 	mTexture = gl::Texture::create(loadImage(loadAsset("blank_texture.png")), gl::Texture::Format().mipmap());
-	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo.jpg")));
+	mLogoTexture = gl::Texture::create(loadImage(loadAsset("linkin_park_logo_flipped.png")));
 #if ! defined( CINDER_GL_ES )
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
 	mGlslDyingCubes = gl::GlslProg::create(loadAsset("shaderDying.vert"), loadAsset("shaderDying.frag"));
@@ -319,6 +329,7 @@ void HP_WaitingRTApp::setup()
 	std::vector<float> deathTotalLifetimes = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
 	std::vector<float> dyingScales = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
 	std::vector<vec3> trianglePositions;
+	std::vector<vec4> triangleVertColors;
 	std::vector<uint16_t> triangleIndices;
 	for (size_t potX = 0; potX < width; ++potX) {
 		for (size_t potY = 0; potY < height; ++potY) {
@@ -328,6 +339,7 @@ void HP_WaitingRTApp::setup()
 			positions.push_back(pos);
 			backPositions.push_back(pos);
 			trianglePositions.push_back(pos);
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for every vert
 
 			cubeScales.push_back(randFloat(0.2, 5));
 			fillerScales.push_back(randFloat(0.2, 5));
@@ -337,6 +349,8 @@ void HP_WaitingRTApp::setup()
 			mPreviousValidDepthCoord.push_back(pos);
 
 			triangleIndices.resize(triangleIndices.size() + 12, 0); //+12 because 3 indices per triangle, 4 triangles (up/down/left/right) per pixel.
+
+			
 		}
 	}
 
@@ -355,6 +369,7 @@ void HP_WaitingRTApp::setup()
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
 	mTrianglePositionsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, trianglePositions.size() * sizeof(vec3), trianglePositions.data(), GL_DYNAMIC_DRAW);
+	mTriangleColorsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, triangleVertColors.size() * sizeof(vec4), triangleVertColors.data(), GL_DYNAMIC_DRAW);
 
 	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
 	geom::BufferLayout instanceDataLayout;
@@ -407,6 +422,9 @@ void HP_WaitingRTApp::setup()
 	trianglePositionsLayout.append(geom::Attrib::POSITION, 3, 0, 0, 0);
 
 	pair<geom::BufferLayout, gl::VboRef> myPair(trianglePositionsLayout, mTrianglePositionsVbo);
+	
+	//mTriangleColorsVbo ....? use vbo of color in layout???
+	
 	std::vector<std::pair<geom::BufferLayout, gl::VboRef>> triangleRefVec;
 	triangleRefVec.push_back(myPair);
 	mTrianglesVboMesh = gl::VboMesh::create(
@@ -516,8 +534,9 @@ void HP_WaitingRTApp::update()
 
 	vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->mapWriteOnly(true);
 	uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->mapWriteOnly(true);
+	vec4 *triangleColors = (vec4*)mTriangleColorsVbo->mapWriteOnly(true);
 
-	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, trianglePositions, trangleIndices, elapsed, currentParticleSetting);
+	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, trianglePositions, trangleIndices, triangleColors, elapsed, currentParticleSetting);
 
 
 	mInstancePositionVbo->unmap();
@@ -530,10 +549,11 @@ void HP_WaitingRTApp::update()
 
 	mTrianglePositionsVbo->unmap();
 	mTriangleIndicesVbo->unmap();
+	mTriangleColorsVbo->unmap();
 }
 
 //Given mapped buffers, set up all the particles for drawing.
-void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, float elapsed, BackParticleSetting backSetting)
+void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, vec4 *triangleColors, float elapsed, BackParticleSetting backSetting)
 {
 	numberToDraw = 0;
 	backNumberToDraw = 0;
@@ -581,11 +601,32 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					subsampledDepths[x + (y * subsampledWidth)]);
 				vec3 p = mDSAPI->getDepthSpacePoint(trianglePoint);
 				*trianglePositions++ = p;
+
+
+
+				float zImage[] = { static_cast<float>(x * mDepthSubsampleSize), static_cast<float>(y * mDepthSubsampleSize), static_cast<float>(subsampledDepths[x + (y * subsampledWidth)]) }, zCamera[3], thirdCamera[3], thirdImage[2];
+				DSTransformFromZImageToZCamera(zIntrin, zImage, zCamera);
+				DSTransformFromZCameraToRectThirdCamera(zToThirdTrans, zCamera, thirdCamera);
+				DSTransformFromThirdCameraToRectThirdImage(thirdIntrin, thirdCamera, thirdImage);
+				
+				if (zImage[2] != 0)
+				{
+					uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
+					uint8_t g = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 1];
+					uint8_t b = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 2];
+					*triangleColors++ = vec4((float)r / (float)255, (float)g / (float)255, (float)b / (float)255, 1.0);
+				}
+				else
+				{
+					*triangleColors++ = vec4(0, 0, 0, 0);
+				}
+
 				std::vector<pair<bool, uint16_t>> windowFromTopLeft = getSquareFromTopLeft<uint16_t>(subsampledDepths, x, y, subsampledWidth, subsampledHeight, mCam.getFarClip());
 				if (windowFromTopLeft[2].first &&
 					windowFromTopLeft[1].first &&
 					windowFromTopLeft[0].first)
 				{
+
 					*triangleIndices++ = windowFromTopLeft[2].second;
 					*triangleIndices++ = windowFromTopLeft[1].second;
 					*triangleIndices++ = windowFromTopLeft[0].second;
@@ -759,7 +800,8 @@ void HP_WaitingRTApp::draw()
 	if (DrawTriangles)
 	{
 		vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->map(GL_READ_ONLY);
-		uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
+		uint16_t *triangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
+		vec4 *triangleColors = (vec4*)mTriangleColorsVbo->map(GL_READ_ONLY);
 
 		//GLuint positions;
 		//glGenBuffers(1, &positions);
@@ -794,8 +836,8 @@ void HP_WaitingRTApp::draw()
 		gl::begin(GL_TRIANGLES);
 		for (int i = 0; i < numberTrianglesToDraw; i++)
 		{
-			vec3 ab(trianglePositions[trangleIndices[(i * 3) + 1]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
-			vec3 ac(trianglePositions[trangleIndices[(i * 3) + 2]] - trianglePositions[trangleIndices[(i * 3) + 0]]);
+			vec3 ab(trianglePositions[triangleIndices[(i * 3) + 1]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
+			vec3 ac(trianglePositions[triangleIndices[(i * 3) + 2]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
 			vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
 			
 			//vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
@@ -805,15 +847,26 @@ void HP_WaitingRTApp::draw()
 			//averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
 			//gl::color(averageDepth, averageDepth, averageDepth, 0.75);
 			
+			vec4 c1 = triangleColors[triangleIndices[(i * 3) + 0]];
+			vec4 c2 = triangleColors[triangleIndices[(i * 3) + 1]];
+			vec4 c3 = triangleColors[triangleIndices[(i * 3) + 2]];
 
-			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 0]]);
-			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 1]]);
-			gl::vertex(trianglePositions[trangleIndices[(i * 3) + 2]]);
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 0]]);
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 1]]);
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 2]]);
 		}
 		gl::end();
 
 		mTrianglePositionsVbo->unmap();
 		mTriangleIndicesVbo->unmap();
+		mTriangleColorsVbo->unmap();
 	}
 
 	gl::setMatrices(mMayaCam.getCamera());
@@ -943,7 +996,7 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 	else if (event.getChar() == 'f'){
 		MaskFrontParticles = !MaskFrontParticles;
 	}
-	else if (event.getChar() == 'g'){
+	else if (event.getChar() == 'h'){
 		DrawTriangles = !DrawTriangles;
 	}
 }

@@ -76,7 +76,12 @@ namespace CinderDS
 		const ivec2 getRgbSize(){ return ivec2(mRgbWidth, mRgbHeight); }
 		const vec2 getRgbFOVs();
 
-		DSAPIRef getDSAPI();
+		const DSAPIRef getDSAPI();
+		DSThird* getDSThird();
+		const DSCalibIntrinsicsRectified getZIntrinsics();
+		const DSCalibIntrinsicsRectified getRgbIntrinsics();
+
+
 		
 	private:
 		bool	open();
