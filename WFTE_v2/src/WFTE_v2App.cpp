@@ -1,0 +1,216 @@
+#ifdef _DEBUG
+#pragma comment(lib, "DSAPI.dbg.lib")
+#else
+#pragma comment(lib, "DSAPI.lib")
+#endif
+#include "cinder/app/AppNative.h"
+#include "cinder/app/RendererGl.h"
+#include "cinder/gl/gl.h"
+#include "cinder/gl/Batch.h"
+#include "cinder/gl/Texture.h"
+#include "cinder/gl/GlslProg.h"
+#include "cinder/gl/Fbo.h"
+#include "cinder/Camera.h"
+#include "cinder/MayaCamUI.h"
+#include "CiDSAPI.h"
+
+using namespace ci;
+using namespace ci::app;
+using namespace std;
+using namespace CinderDS;
+
+static ivec2 S_DIMS(480, 360);
+
+class WFTE_v2App : public AppNative 
+{
+public:
+	void setup() override;
+	void mouseDown( MouseEvent event ) override;
+	void mouseDrag(MouseEvent event) override;
+	void update() override;
+	void draw() override;
+
+	void exit();
+
+private:
+	void setupDS();
+	void setupMesh();
+
+	void updateDepthTexture();
+	void updatePointCloud();
+
+	struct CloudPoint
+	{
+		vec3 PPosition;
+		vec4 PColor;
+		vec2 PTexCoord;
+		CloudPoint(vec3 pPos, vec4 pCol, vec2 pUv) :PPosition(pPos), PColor(pCol), PTexCoord(pUv){}
+	};
+
+	gl::BatchRef mDrawObj;
+	gl::VboMeshRef mPointCloud;
+	gl::VboRef mVertexData;
+	geom::BufferLayout mVertexAttribs;
+	vector<CloudPoint> mPoints;
+
+	gl::GlslProgRef mShader;
+	gl::TextureRef mTexDepth;
+
+	gl::FboRef mFbo;
+	CinderDSRef mCinderDS;
+
+	CameraPersp mCamera;
+	MayaCamUI mMayaCam;
+};
+
+void WFTE_v2App::setup()
+{
+	setupDS();
+	setupMesh();
+
+	getWindow()->setSize(1280, 720);
+	setFrameRate(60);
+
+	mCamera.setPerspective(45.0f, getWindowAspectRatio(), 0.1f, 100.0f);
+	mCamera.lookAt(vec3(0), vec3(0,0,-1), vec3(0, -1, 0));
+	mCamera.setCenterOfInterestPoint(vec3(0,0,-3));
+	mMayaCam.setCurrentCam(mCamera);
+}
+
+void WFTE_v2App::setupDS()
+{
+	mCinderDS = CinderDSAPI::create();
+	mCinderDS->init();
+	mCinderDS->initDepth(FrameSize::DEPTHSD, 60);
+	mCinderDS->initRgb(FrameSize::RGBVGA, 60);
+	mCinderDS->start();
+
+	getSignalShutdown().connect(std::bind(&WFTE_v2App::exit, this));
+}
+
+void WFTE_v2App::setupMesh()
+{
+	try
+	{
+		mShader = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error Loading Shaders: " << endl;
+		console() << e.what() << endl;
+	}
+
+	mPoints.clear();
+	for (int dy = 0; dy < S_DIMS.y; ++dy)
+	{
+		for (int dx = 0; dx < S_DIMS.x; ++dx)
+		{
+			float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
+			float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
+			float cz = 0.0f;
+			float cr = lmap<float>(dx, 0, S_DIMS.x, 0.0f, 1.0f);
+			float cg = lmap<float>(dy, 0, S_DIMS.y, 1.0f, 0.0f);
+			float cb = 1.0f;
+			float cu = dx / (float)S_DIMS.x;
+			float cv = dy / (float)S_DIMS.y;
+			mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr, cg, cb, 1.0), vec2(cu, cv)));
+		}
+	}
+
+	mVertexData = gl::Vbo::create(GL_ARRAY_BUFFER, mPoints, GL_DYNAMIC_DRAW);
+	mVertexAttribs.append(geom::POSITION, 3, sizeof(CloudPoint), offsetof(CloudPoint, PPosition));
+	mVertexAttribs.append(geom::COLOR, 4, sizeof(CloudPoint), offsetof(CloudPoint, PColor));
+	mVertexAttribs.append(geom::TEX_COORD_0, 2, sizeof(CloudPoint), offsetof(CloudPoint, PTexCoord));
+
+	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
+	mDrawObj = gl::Batch::create(mPointCloud, mShader);
+}
+
+void WFTE_v2App::mouseDown( MouseEvent event )
+{
+	mMayaCam.mouseDown(event.getPos());
+}
+
+void WFTE_v2App::mouseDrag(MouseEvent event)
+{
+	mMayaCam.mouseDrag(event.getPos(), event.isLeftDown(), false, event.isRightDown());
+}
+
+void WFTE_v2App::update()
+{
+	mCinderDS->update();
+	//updateDepthTexture();
+	updatePointCloud();
+}
+
+void WFTE_v2App::updateDepthTexture()
+{
+	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
+	Surface8u cDepthSurf(S_DIMS.x, S_DIMS.y, false, SurfaceChannelOrder::RGB);
+	Surface8u::Iter cIter = cDepthSurf.getIter();
+
+	int id = 0;
+	while (cIter.line())
+	{
+		while (cIter.pixel())
+		{
+			cIter.r() = 0;
+			cIter.g() = 0;
+			cIter.b() = 0;
+			float cVal = (float)cDepth[id];
+			if (cVal > 100 && cVal < 1000)
+			{
+				cIter.r() = (uint8_t)lmap<float>(cVal, 100, 1000, 255, 0);
+			}
+		}
+	}
+
+	mTexDepth->update(cDepthSurf);
+}
+
+void WFTE_v2App::updatePointCloud()
+{
+	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
+	mPoints.clear();
+	int id = 0;
+	for (int dy = 0; dy < S_DIMS.y; ++dy)
+	{
+		for (int dx = 0; dx < S_DIMS.x; ++dx)
+		{
+			float cVal = (float)cDepth[id];
+			if (cVal>100 && cVal < 1000)
+			{
+				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
+				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
+				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
+				float cr = lmap<float>(dx, 0, S_DIMS.x, 0.0f, 1.0f);
+				float cg = lmap<float>(dy, 0, S_DIMS.y, 1.0f, 0.0f);
+				float cb = 1.0f;
+				float cu = dx / (float)S_DIMS.x;
+				float cv = dy / (float)S_DIMS.y;
+				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr, cg, cb, 1.0), vec2(cu, cv)));
+			}
+			id++;
+		}
+	}
+
+	mVertexData->bufferData(mPoints.size()*sizeof(CloudPoint), mPoints.data(), GL_DYNAMIC_DRAW);
+	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
+	mDrawObj->replaceVboMesh(mPointCloud);
+}
+
+void WFTE_v2App::draw()
+{
+	gl::clear( Color( 0, 0, 0 ) ); 
+	gl::color(Color::white());
+	gl::setMatrices(mMayaCam.getCamera());
+
+	mDrawObj->draw();
+}
+
+void WFTE_v2App::exit()
+{
+	mCinderDS->stop();
+}
+
+CINDER_APP_NATIVE( WFTE_v2App, RendererGl )
