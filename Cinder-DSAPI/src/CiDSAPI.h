@@ -46,6 +46,7 @@ namespace CinderDS
 
 		bool init();
 		bool init(uint32_t pSerialNo);
+		bool initForAlignment();
 		bool initRgb(const FrameSize &pRes, const int &pFPS);
 		bool initDepth(const FrameSize &pRes, const int &pFPS);
 		bool initStereo(const FrameSize &pRes, const int &pFPS, const StereoCam &pWhich);
@@ -84,6 +85,13 @@ namespace CinderDS
 		int getRgbHeight(){ return mRgbHeight; }
 		const ivec2 getRgbSize(){ return ivec2(mRgbWidth, mRgbHeight); }
 		const vec2 getRgbFOVs();
+
+		const DSAPIRef getDSAPI();
+		DSThird* getDSThird();
+		const DSCalibIntrinsicsRectified getZIntrinsics();
+		const DSCalibIntrinsicsRectified getRgbIntrinsics();
+
+
 		
 	private:
 		bool	open();
