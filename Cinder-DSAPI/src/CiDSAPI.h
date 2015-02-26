@@ -17,8 +17,9 @@ namespace CinderDS
 	{
 		DEPTHSD,	// 480x360
 		DEPTHVGA,	// 640x480 (628x468)
+		DEPTHQVGA, // 320x240
 		RGBVGA,	// 640x480
-		RGBHD,	// 1920x1080
+		RGBHD	// 1920x1080
 	};
 
 	enum StereoCam
@@ -58,13 +59,22 @@ namespace CinderDS
 		const Channel8u& getRightFrame();
 		const Channel16u& getDepthFrame();
 
-		const vec3 getDepthSpacePoint(float pX, float pY, float pZ);	// get a 3d point from depth image coords (image x, image y, depth)
-		const vec3 getDepthSpacePoint(int pX, int pY, uint16_t pZ);		// get a 3d point from depth image coords (image x, image y, depth)
-		const vec3 getDepthSpacePoint(vec3 pPoint);						// get a 3d point from depth image coords (image x, image y, depth)
+		const vector<ivec2>& mapDepthToColorFrame();
+		//const Surface32f& mapDepthToCameraTable();
 
-		const Color getColorAtDepth(float pX, float pY, float pZ);		//get a Color object from depth image coords (image x, image y, depth)
-		const Color getColorAtDepth(int pX, int pY, uint16_t pZ);		//get a Color object from depth image coords (image x, image y, depth)
-		const Color getColorAtDepth(vec3 pPoint);						//get a Color object from depth image coords (image x, image y, depth)
+		// get a 3d point from depth image coords (image x, image y, depth)
+		const vec3 getZCameraSpacePoint(float pX, float pY, float pZ);
+		const vec3 getZCameraSpacePoint(int pX, int pY, uint16_t pZ);
+		const vec3 getZCameraSpacePoint(vec3 pPoint);
+
+		//get a Color object from depth image coords (image x, image y, depth)
+		const Color getDepthSpaceColor(float pX, float pY, float pZ);		
+		const Color getDepthSpaceColor(int pX, int pY, uint16_t pZ);		
+		const Color getDepthSpaceColor(vec3 pPoint);						
+
+		//get a Color object from camera space coords (camera x, camera y, camera z)
+		const Color getColorFromZCamera(float pX, float pY, float pZ);		
+		const Color getColorFromZCamera(vec3 pPoint);
 
 		int getDepthWidth(){ return mLRZWidth; }
 		int getDepthHeight(){ return mLRZHeight; }
@@ -111,11 +121,14 @@ namespace CinderDS
 		Channel8u		mLeftFrame;
 		Channel8u		mRightFrame;
 		Channel16u		mDepthFrame;
+		Surface32f		mDepthToCameraTable;
 
 		Surface8uRef	mRgbFrameRef;
 		Channel8uRef	mLeftFrameRef;
 		Channel8uRef	mRightFrameRef;
 		Channel16uRef	mDepthFrameRef;
+
+		vector<ivec2> mDepthToColor;
 
 	};
 };
