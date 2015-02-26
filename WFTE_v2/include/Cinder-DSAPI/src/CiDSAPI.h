@@ -76,6 +76,8 @@ namespace CinderDS
 		const Color getColorFromZCamera(float pX, float pY, float pZ);		
 		const Color getColorFromZCamera(vec3 pPoint);
 
+		const vec2 mapColorToDepth(float pX, float pY, float pZ);
+
 		int getDepthWidth(){ return mLRZWidth; }
 		int getDepthHeight(){ return mLRZHeight; }
 		const ivec2 getDepthSize(){ return ivec2(mLRZWidth, mLRZHeight); }

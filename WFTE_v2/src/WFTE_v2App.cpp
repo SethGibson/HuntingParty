@@ -36,7 +36,7 @@ private:
 	void setupDS();
 	void setupMesh();
 
-	void updateDepthTexture();
+	void updateTextures();
 	void updatePointCloud();
 
 	struct CloudPoint
@@ -54,7 +54,7 @@ private:
 	vector<CloudPoint> mPoints;
 
 	gl::GlslProgRef mShader;
-	gl::TextureRef mTexDepth;
+	gl::TextureRef mTexRgb;
 
 	gl::FboRef mFbo;
 	CinderDSRef mCinderDS;
@@ -75,6 +75,8 @@ void WFTE_v2App::setup()
 	mCamera.lookAt(vec3(0), vec3(0,0,-1), vec3(0, -1, 0));
 	mCamera.setCenterOfInterestPoint(vec3(0,0,-3));
 	mMayaCam.setCurrentCam(mCamera);
+
+	mTexRgb = gl::Texture::create(640, 480);
 }
 
 void WFTE_v2App::setupDS()
@@ -139,33 +141,13 @@ void WFTE_v2App::mouseDrag(MouseEvent event)
 void WFTE_v2App::update()
 {
 	mCinderDS->update();
-	//updateDepthTexture();
+	updateTextures();
 	updatePointCloud();
 }
 
-void WFTE_v2App::updateDepthTexture()
+void WFTE_v2App::updateTextures()
 {
-	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
-	Surface8u cDepthSurf(S_DIMS.x, S_DIMS.y, false, SurfaceChannelOrder::RGB);
-	Surface8u::Iter cIter = cDepthSurf.getIter();
-
-	int id = 0;
-	while (cIter.line())
-	{
-		while (cIter.pixel())
-		{
-			cIter.r() = 0;
-			cIter.g() = 0;
-			cIter.b() = 0;
-			float cVal = (float)cDepth[id];
-			if (cVal > 100 && cVal < 1000)
-			{
-				cIter.r() = (uint8_t)lmap<float>(cVal, 100, 1000, 255, 0);
-			}
-		}
-	}
-
-	mTexDepth->update(cDepthSurf);
+	mTexRgb->update(mCinderDS->getRgbFrame());
 }
 
 void WFTE_v2App::updatePointCloud()
@@ -183,12 +165,13 @@ void WFTE_v2App::updatePointCloud()
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
-				float cr = lmap<float>(dx, 0, S_DIMS.x, 0.0f, 1.0f);
-				float cg = lmap<float>(dy, 0, S_DIMS.y, 1.0f, 0.0f);
+				float cr = lmap<float>(cz, -5, -1, 0.0f, 1.0f);
+				float cg = lmap<float>(cz, -5, -1, 0.5f, 1.0f);
 				float cb = 1.0f;
-				float cu = dx / (float)S_DIMS.x;
-				float cv = dy / (float)S_DIMS.y;
-				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr, cg, cb, 1.0), vec2(cu, cv)));
+
+				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
+				cUV.y = 1.0 - cUV.y;
+				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr,cg,cb,1), cUV));
 			}
 			id++;
 		}
@@ -202,9 +185,12 @@ void WFTE_v2App::updatePointCloud()
 void WFTE_v2App::draw()
 {
 	gl::clear( Color( 0, 0, 0 ) ); 
-	gl::color(Color::white());
+	gl::enableDepthRead();
+	gl::enableDepthWrite();
+	gl::enableAdditiveBlending();
 	gl::setMatrices(mMayaCam.getCamera());
 
+	gl::ScopedTextureBind cTex(mTexRgb);
 	mDrawObj->draw();
 }
 
