@@ -12,6 +12,7 @@
 #include "cinder/gl/Fbo.h"
 #include "cinder/Camera.h"
 #include "cinder/MayaCamUI.h"
+#include "cinder/params/Params.h"
 #include "CiDSAPI.h"
 
 using namespace ci;
@@ -33,6 +34,7 @@ public:
 	void exit();
 
 private:
+	void setupGUI();
 	void setupDS();
 	void setupMesh();
 	void setupShaders();
@@ -50,32 +52,47 @@ private:
 		CloudPoint(vec3 pPos, vec4 pCol, vec2 pUv) :PPosition(pPos), PColor(pCol), PTexCoord(pUv){}
 	};
 
-	gl::BatchRef mDrawObj;
-	gl::VboMeshRef mPointCloud;
-	gl::VboRef mVertexData;
-	geom::BufferLayout mVertexAttribs;
-	vector<CloudPoint> mPoints;
+	gl::BatchRef		mDrawObj;
+	gl::VboMeshRef		mPointCloud;
+	gl::VboRef			mVertexData;
+	geom::BufferLayout	mVertexAttribs;
+	vector<CloudPoint>	mPoints;
 
-	gl::GlslProgRef mShaderColor;
-	gl::GlslProgRef mShaderRender;
-	gl::GlslProgRef mShaderFilter;
-	gl::GlslProgRef mShaderResolve;
+	gl::GlslProgRef		mShaderColor;
+	gl::GlslProgRef		mShaderRender;
+	gl::GlslProgRef		mShaderFilter;
+	gl::GlslProgRef		mShaderResolve;
 	
-	gl::TextureRef mTexRgb;
+	gl::TextureRef		mTexRgb;
 
-	gl::FboRef mColorTarget;	//step 1: render scene and get brightness
-	gl::FboRef mLumTarget;		//step 2: blur brightness
-	gl::FboRef mFilterTarget;
-	gl::FboRef mFinalTarget;
+	gl::FboRef			mColorTarget;	//step 1: render scene and get brightness
+	gl::FboRef			mLumTarget;		//step 2: blur brightness
+	gl::FboRef			mFilterTarget;
+	gl::FboRef			mFinalTarget;
 
-	CinderDSRef mCinderDS;
+	CinderDSRef			mCinderDS;
 
-	CameraPersp mCamera;
-	MayaCamUI mMayaCam;
+	CameraPersp			mCamera;
+	MayaCamUI			mMayaCam;
+
+	// UI Data
+	params::InterfaceGlRef mGUI;
+	float				mBloomMin,
+						mBloomMax,
+						mExposure,
+						mBloomFactor,
+						mSceneFactor,
+						mDepthMin,
+						mDepthMax,
+						mDrawSize,
+						mBloomSize;
+
+	Color				mMaskColor;
 };
 
 void WFTE_v2App::setup()
 {
+	setupGUI();
 	setupDS();
 	setupShaders();
 	setupMesh();
@@ -96,6 +113,38 @@ void WFTE_v2App::setup()
 	gl::enableAdditiveBlending();
 }
 
+void WFTE_v2App::setupGUI()
+{
+	mBloomMin = 0.4f;
+	mBloomMax = 1.2f;
+	mExposure = 0.9f;
+	mBloomFactor = 1.0f;
+	mSceneFactor = 1.0f;
+	mDepthMin = 100.0f;
+	mDepthMax = 1000.0f;
+	mDrawSize = 1.0f;
+	mBloomSize = 2.0f;
+	mMaskColor = Color(0.25f, 0.75f, 1.0f);
+
+	mGUI = params::InterfaceGl::create("Settings", vec2(250, 300));
+	mGUI->setPosition(vec2(20));
+	mGUI->addText("Cloud Parameters");
+	mGUI->addParam("Min Depth", &mDepthMin);
+	mGUI->addParam("Max Depth", &mDepthMax);
+	mGUI->addParam("Cloud Point Size", &mDrawSize);
+	mGUI->addParam("Blur Point Size", &mBloomSize);
+	mGUI->addParam("Mask Color", &mMaskColor);
+	mGUI->addSeparator();
+	mGUI->addText("Bloom Parameters");
+	mGUI->addParam("Min Bloom", &mBloomMin);
+	mGUI->addParam("Max Bloom", &mBloomMax);
+	mGUI->addParam("Exposure", &mExposure);
+	mGUI->addParam("Bloom Factor", &mBloomFactor);
+	mGUI->addParam("Scene Factor", &mSceneFactor);
+	
+
+}
+
 void WFTE_v2App::setupShaders()
 {
 	try
@@ -109,7 +158,7 @@ void WFTE_v2App::setupShaders()
 	}
 	try
 	{
-		mShaderRender = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_01_render_frag.glsl"));
+		mShaderRender = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_01_render_frag.glsl"));
 	}
 	catch (const gl::GlslProgExc &e)
 	{
@@ -227,15 +276,15 @@ void WFTE_v2App::updatePointCloud()
 		for (int dx = 0; dx < S_DIMS.x; ++dx)
 		{
 			float cVal = (float)cDepth[id];
-			if (cVal>100 && cVal < 1000 && dx%2==0&&dy%2==0)
+			if (cVal>mDepthMin && cVal < mDepthMax && dy%2==0)
 			{
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
-				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
+				float cz = lmap<float>(cVal, mDepthMin, mDepthMax, -1, -5);
 
 				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
 				cUV.y = 1.0 - cUV.y;
-				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(0.25,0.75,1,1), cUV));
+				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(mMaskColor.r, mMaskColor.g, mMaskColor.b,1), cUV));
 			}
 			id++;
 		}
@@ -248,29 +297,31 @@ void WFTE_v2App::updatePointCloud()
 
 void WFTE_v2App::renderScene()
 {
+	//Color VBO
 	mColorTarget->bindFramebuffer();
 	gl::clear(Color::black());
 	gl::viewport(ivec2(0), mColorTarget->getSize());
-	
-	//Base color
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
-	gl::pointSize(4.0f);
+	gl::pointSize(mDrawSize);
 	mDrawObj->draw();
 	mColorTarget->unbindFramebuffer();
 	mTexRgb->unbind();
 
-	//Luminance
+	//Luminance VBO
 	mLumTarget->bindFramebuffer();
 	gl::clear(Color::black());
-	gl::viewport(ivec2(0), mLumTarget->getSize());
-	gl::setMatricesWindow(getWindowSize());
-	mColorTarget->bindTexture();
-	mShaderRender->bind();
-	gl::drawSolidRect(Rectf({ vec2(0), mLumTarget->getSize() }));
-	mColorTarget->unbindTexture();
+	gl::viewport(ivec2(0), mColorTarget->getSize());
+	gl::setMatrices(mMayaCam.getCamera());
+	mTexRgb->bind();
+	gl::pointSize(mBloomSize);
+	mShaderRender->uniform("mBloomMin", mBloomMin);
+	mShaderRender->uniform("mBloomMax", mBloomMax);
+	mDrawObj->replaceGlslProg(mShaderRender);
+	mDrawObj->draw();
 	mLumTarget->unbindFramebuffer();
-	
+	mTexRgb->unbind();
+
 	//Blur
 	mFilterTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -292,6 +343,9 @@ void WFTE_v2App::renderScene()
 	mShaderResolve->bind();
 	mShaderResolve->uniform("mHdrTarget", 0);
 	mShaderResolve->uniform("mBloomTarget", 1);
+	mShaderResolve->uniform("mExposure", mExposure);
+	mShaderResolve->uniform("mBloomFactor", mBloomFactor);
+	mShaderResolve->uniform("mSceneFactor", mSceneFactor);
 	gl::drawSolidRect(Rectf({ vec2(0), mLumTarget->getSize() }));
 	mLumTarget->unbindTexture();
 	mFilterTarget->unbindTexture();
@@ -306,14 +360,18 @@ void WFTE_v2App::draw()
 
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
+	mDrawObj->replaceGlslProg(mShaderColor);
+	gl::pointSize(1.0);
 	mDrawObj->draw();
 	mTexRgb->unbind();
 	gl::setMatricesWindow(getWindowSize());
 	gl::enableAdditiveBlending();
-	//gl::draw(mColorTarget->getColorTexture(), vec2(0));
-	//gl::draw(mLumTarget->getColorTexture(), vec2(0));
-	//gl::draw(mFilterTarget->getColorTexture(), vec2(0));
 	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
+
+	gl::setMatricesWindow(getWindowSize());
+	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
+
+	mGUI->draw();
 }
 
 void WFTE_v2App::exit()
