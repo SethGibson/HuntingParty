@@ -35,6 +35,8 @@ public:
 private:
 	void setupDS();
 	void setupMesh();
+	void setupShaders();
+	void setupFBOs();
 
 	void updateTextures();
 	void updatePointCloud();
@@ -54,13 +56,18 @@ private:
 	geom::BufferLayout mVertexAttribs;
 	vector<CloudPoint> mPoints;
 
-	gl::GlslProgRef mBlurShader;
-	gl::GlslProgRef mColorShader;
-	gl::GlslProgRef mExposureShader;
-	gl::GlslProgRef mTexReplaceShader;
+	gl::GlslProgRef mShaderColor;
+	gl::GlslProgRef mShaderRender;
+	gl::GlslProgRef mShaderFilter;
+	gl::GlslProgRef mShaderResolve;
+	
 	gl::TextureRef mTexRgb;
 
-	gl::FboRef mBlurTarget;
+	gl::FboRef mColorTarget;	//step 1: render scene and get brightness
+	gl::FboRef mLumTarget;		//step 2: blur brightness
+	gl::FboRef mFilterTarget;
+	gl::FboRef mFinalTarget;
+
 	CinderDSRef mCinderDS;
 
 	CameraPersp mCamera;
@@ -70,7 +77,9 @@ private:
 void WFTE_v2App::setup()
 {
 	setupDS();
+	setupShaders();
 	setupMesh();
+	setupFBOs();
 
 	getWindow()->setSize(1280, 720);
 	setFrameRate(60);
@@ -81,11 +90,50 @@ void WFTE_v2App::setup()
 	mMayaCam.setCurrentCam(mCamera);
 
 	mTexRgb = gl::Texture::create(640, 480);
-	mBlurTarget = gl::Fbo::create(1280, 720);
 
 	gl::enableDepthRead();
 	gl::enableDepthWrite();
 	gl::enableAdditiveBlending();
+}
+
+void WFTE_v2App::setupShaders()
+{
+	try
+	{
+		mShaderColor = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_00_color_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading color shader: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mShaderRender = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_01_render_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading render shader: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mShaderFilter = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_02_filter_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading filter shader: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mShaderResolve = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_03_resolve_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading tex resolve shader: " << endl;
+		console() << e.what() << endl;
+	}
 }
 
 void WFTE_v2App::setupDS()
@@ -101,17 +149,6 @@ void WFTE_v2App::setupDS()
 
 void WFTE_v2App::setupMesh()
 {
-	try
-	{
-		mBlurShader = gl::GlslProg::create(loadAsset("WFTE_bloom_vert.glsl"), loadAsset("WFTE_bloom_frag.glsl"));
-		mColorShader = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_frag.glsl"));
-	}
-	catch (const gl::GlslProgExc &e)
-	{
-		console() << "Error Loading Shaders: " << endl;
-		console() << e.what() << endl;
-	}
-
 	mPoints.clear();
 	for (int dy = 0; dy < S_DIMS.y; ++dy)
 	{
@@ -135,7 +172,26 @@ void WFTE_v2App::setupMesh()
 	mVertexAttribs.append(geom::TEX_COORD_0, 2, sizeof(CloudPoint), offsetof(CloudPoint, PTexCoord));
 
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
-	mDrawObj = gl::Batch::create(mPointCloud, mBlurShader);
+	mDrawObj = gl::Batch::create(mPointCloud, mShaderColor);
+}
+
+void WFTE_v2App::setupFBOs()
+{
+	gl::Fbo::Format cColorFormat;
+	cColorFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA16F));
+	mColorTarget = gl::Fbo::create(1280, 720, cColorFormat);
+
+	gl::Fbo::Format cLumFormat;
+	cLumFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA32F).dataType(GL_FLOAT));
+	mLumTarget = gl::Fbo::create(1280, 720, cLumFormat);
+
+	gl::Fbo::Format cFilterFormat;
+	cFilterFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA32F).dataType(GL_FLOAT));
+	mFilterTarget = gl::Fbo::create(1280, 720, cFilterFormat);
+
+	gl::Fbo::Format cFinalFormat;
+	cFinalFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA16F));
+	mFinalTarget = gl::Fbo::create(1280, 720, cFinalFormat);
 }
 
 void WFTE_v2App::mouseDown( MouseEvent event )
@@ -188,39 +244,76 @@ void WFTE_v2App::updatePointCloud()
 	mVertexData->bufferData(mPoints.size()*sizeof(CloudPoint), mPoints.data(), GL_DYNAMIC_DRAW);
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
 	mDrawObj->replaceVboMesh(mPointCloud);
-	mDrawObj->replaceGlslProg(mBlurShader);
 }
 
 void WFTE_v2App::renderScene()
 {
-	gl::ScopedFramebuffer cFBO(mBlurTarget);
+	mColorTarget->bindFramebuffer();
 	gl::clear(Color::black());
-	gl::ScopedViewport cVP(ivec2(0), mBlurTarget->getSize());
-
+	gl::viewport(ivec2(0), mColorTarget->getSize());
+	
+	//Base color
 	gl::setMatrices(mMayaCam.getCamera());
-	gl::ScopedTextureBind cTex(mTexRgb);
+	mTexRgb->bind();
 	gl::pointSize(4.0f);
 	mDrawObj->draw();
+	mColorTarget->unbindFramebuffer();
+	mTexRgb->unbind();
 
-	gl::color(Color::white());
+	//Luminance
+	mLumTarget->bindFramebuffer();
+	gl::clear(Color::black());
+	gl::viewport(ivec2(0), mLumTarget->getSize());
+	gl::setMatricesWindow(getWindowSize());
+	mColorTarget->bindTexture();
+	mShaderRender->bind();
+	gl::drawSolidRect(Rectf({ vec2(0), mLumTarget->getSize() }));
+	mColorTarget->unbindTexture();
+	mLumTarget->unbindFramebuffer();
+	
+	//Blur
+	mFilterTarget->bindFramebuffer();
+	gl::clear(Color::black());
+	gl::viewport(ivec2(0), mFilterTarget->getSize());
+	gl::setMatricesWindow(getWindowSize());
+	mLumTarget->bindTexture();
+	mShaderFilter->bind();
+	gl::drawSolidRect(Rectf({ vec2(0), mLumTarget->getSize() }));
+	mLumTarget->unbindTexture();
+	mFilterTarget->unbindFramebuffer();
+
+	//Resolve
+	mFinalTarget->bindFramebuffer();
+	gl::clear(Color::black());
+	gl::viewport(ivec2(0), mFinalTarget->getSize());
+	gl::setMatricesWindow(getWindowSize());
+	mLumTarget->bindTexture(0);
+	mFilterTarget->bindTexture(1);
+	mShaderResolve->bind();
+	mShaderResolve->uniform("mHdrTarget", 0);
+	mShaderResolve->uniform("mBloomTarget", 1);
+	gl::drawSolidRect(Rectf({ vec2(0), mLumTarget->getSize() }));
+	mLumTarget->unbindTexture();
+	mFilterTarget->unbindTexture();
+	mFinalTarget->unbindFramebuffer();
+	
 }
 
 void WFTE_v2App::draw()
 {
 	gl::clear( Color( 0, 0, 0 ) );
-
 	gl::color(Color::white());
+
 	gl::setMatrices(mMayaCam.getCamera());
-	gl::pointSize(1.0f);
 	mTexRgb->bind();
-	mDrawObj->replaceGlslProg(mColorShader);
 	mDrawObj->draw();
 	mTexRgb->unbind();
-	
-	gl::enableAdditiveBlending();
-	gl::color(ColorA(1, 1, 1, 1));
 	gl::setMatricesWindow(getWindowSize());
-	gl::draw(mBlurTarget->getColorTexture(), vec2(0));
+	gl::enableAdditiveBlending();
+	//gl::draw(mColorTarget->getColorTexture(), vec2(0));
+	//gl::draw(mLumTarget->getColorTexture(), vec2(0));
+	//gl::draw(mFilterTarget->getColorTexture(), vec2(0));
+	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
 }
 
 void WFTE_v2App::exit()

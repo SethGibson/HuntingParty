@@ -54,13 +54,19 @@
     <None Include="..\assets\WFTE_vert.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
-    <None Include="..\assets\WFTE_frag.glsl">
+    <None Include="..\assets\WFTE_01_render_frag.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
-    <None Include="..\assets\WFTE_bloom_vert.glsl">
+    <None Include="..\assets\WFTE_02_filter_frag.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
-    <None Include="..\assets\WFTE_bloom_frag.glsl">
+    <None Include="..\assets\WFTE_03_resolve_frag.glsl">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="..\assets\WFTE_00_color_frag.glsl">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="..\assets\WFTE_vert_fbo.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
   </ItemGroup>

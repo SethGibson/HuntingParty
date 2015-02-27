@@ -1,25 +1,46 @@
 #version 150
-uniform sampler2D mRgbTex;
-in vec4 Color;
+
+uniform sampler2D mHdrTex;
 in vec2 UV;
+
 out vec4 oColor;
 
-float l = 1.0;
-float m = 0.75;
-float t = 0.5;
-
-vec2 s = vec2(640,480);
-//int sam = ;
-//float q = 5;
+const float weights[] = float[](0.0024499299678342,
+                                0.0043538453346397,
+                                0.0073599963704157,
+                                0.0118349786570722,
+                                0.0181026699707781,
+                                0.0263392293891488,
+                                0.0364543006660986,
+                                0.0479932050577658,
+                                0.0601029809166942,
+                                0.0715974486241365,
+                                0.0811305381519717,
+                                0.0874493212267511,
+                                0.0896631113333857,
+                                0.0874493212267511,
+                                0.0811305381519717,
+                                0.0715974486241365,
+                                0.0601029809166942,
+                                0.0479932050577658,
+                                0.0364543006660986,
+                                0.0263392293891488,
+                                0.0181026699707781,
+                                0.0118349786570722,
+                                0.0073599963704157,
+                                0.0043538453346397,
+                                0.0024499299678342);
 
 void main()
 {
-	vec4 cColor = texture2D(mRgbTex, UV)*Color;
-	vec4 sum = cColor;
-	sum *= (m/l);
-	sum *= 1.0 + (sum / (t*t));
-	sum -= 0.5;
-	
-	sum = sum / (1.0+sum);
-	oColor = sum*2;
+	vec4 c = vec4(0);
+	ivec2 P = ivec2(gl_FragCoord.xy) - ivec2(0,weights.length()>>1);
+
+	int i;
+	for(i=0;i<weights.length();i++)
+	{
+		c+=texelFetch(mHdrTex, P+ivec2(0,i),0)*weights[i];
+	}
+
+	oColor = c;
 }

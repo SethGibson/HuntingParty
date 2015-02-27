@@ -202,10 +202,12 @@
     <ClInclude Include="..\include\Resources.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\assets\WFTE_bloom_frag.glsl" />
-    <None Include="..\assets\WFTE_bloom_vert.glsl" />
-    <None Include="..\assets\WFTE_frag.glsl" />
+    <None Include="..\assets\WFTE_00_color_frag.glsl" />
+    <None Include="..\assets\WFTE_01_render_frag.glsl" />
+    <None Include="..\assets\WFTE_02_filter_frag.glsl" />
+    <None Include="..\assets\WFTE_03_resolve_frag.glsl" />
     <None Include="..\assets\WFTE_vert.glsl" />
+    <None Include="..\assets\WFTE_vert_fbo.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
