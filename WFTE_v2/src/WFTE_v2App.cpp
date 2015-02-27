@@ -54,7 +54,10 @@ private:
 	geom::BufferLayout mVertexAttribs;
 	vector<CloudPoint> mPoints;
 
-	gl::GlslProgRef mBlurShader, mColorShader;
+	gl::GlslProgRef mBlurShader;
+	gl::GlslProgRef mColorShader;
+	gl::GlslProgRef mExposureShader;
+	gl::GlslProgRef mTexReplaceShader;
 	gl::TextureRef mTexRgb;
 
 	gl::FboRef mBlurTarget;
@@ -168,18 +171,15 @@ void WFTE_v2App::updatePointCloud()
 		for (int dx = 0; dx < S_DIMS.x; ++dx)
 		{
 			float cVal = (float)cDepth[id];
-			if (cVal>100 && cVal < 1000)
+			if (cVal>100 && cVal < 1000 && dx%2==0&&dy%2==0)
 			{
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
-				float cr = lmap<float>(cz, -5, -1, 0.0f, 1.0f);
-				float cg = lmap<float>(cz, -5, -1, 0.5f, 1.0f);
-				float cb = 1.0f;
 
 				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
 				cUV.y = 1.0 - cUV.y;
-				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr,cg,cb,1), cUV));
+				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(0.25,0.75,1,1), cUV));
 			}
 			id++;
 		}
@@ -199,6 +199,7 @@ void WFTE_v2App::renderScene()
 
 	gl::setMatrices(mMayaCam.getCamera());
 	gl::ScopedTextureBind cTex(mTexRgb);
+	gl::pointSize(4.0f);
 	mDrawObj->draw();
 
 	gl::color(Color::white());
@@ -207,13 +208,17 @@ void WFTE_v2App::renderScene()
 void WFTE_v2App::draw()
 {
 	gl::clear( Color( 0, 0, 0 ) );
+
 	gl::color(Color::white());
 	gl::setMatrices(mMayaCam.getCamera());
+	gl::pointSize(1.0f);
 	mTexRgb->bind();
 	mDrawObj->replaceGlslProg(mColorShader);
 	mDrawObj->draw();
 	mTexRgb->unbind();
+	
 	gl::enableAdditiveBlending();
+	gl::color(ColorA(1, 1, 1, 1));
 	gl::setMatricesWindow(getWindowSize());
 	gl::draw(mBlurTarget->getColorTexture(), vec2(0));
 }
