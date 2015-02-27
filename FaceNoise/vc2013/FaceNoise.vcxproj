@@ -19,8 +19,8 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{4593F387-4A17-4C20-BEF5-06123D50346F}</ProjectGuid>
-    <RootNamespace>WFTE_v2</RootNamespace>
+    <ProjectGuid>{7C655952-DF45-4F6E-B0CF-2326D6C5B584}</ProjectGuid>
+    <RootNamespace>FaceNoise</RootNamespace>
     <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -79,7 +79,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>..\include;$(CINDER_DEV)\include;$(CINDER_DEV)\boost;..\include\Cinder-DSAPI\src;$(DSROOT)\Include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\include;"..\..\..\..\libs\Cinder\include";"..\..\..\..\libs\Cinder\boost"</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;NOMINMAX;_WIN32_WINNT=0x0502;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MinimalRebuild>true</MinimalRebuild>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -90,11 +90,11 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>"..\..\..\..\lib\Cinder\include";..\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>"..\..\..\..\libs\Cinder\include";..\include</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>cinder-$(PlatformToolset)_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(CINDER_DEV)\lib\msw\$(PlatformTarget);$(DSROOT)\Lib</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>"..\..\..\..\libs\Cinder\lib\msw\$(PlatformTarget)"</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
@@ -132,7 +132,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\include;$(CINDER_DEV)\include;$(CINDER_DEV)\boost;..\include\Cinder-DSAPI\src;$(DSROOT)\Include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\include;"..\..\..\..\libs\Cinder\include";"..\..\..\..\libs\Cinder\boost"</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;NOMINMAX;_WIN32_WINNT=0x0502;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PrecompiledHeader />
@@ -144,11 +144,11 @@
       <LinkLibraryDependencies>true</LinkLibraryDependencies>
     </ProjectReference>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>"..\..\..\..\lib\Cinder\include";..\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>"..\..\..\..\libs\Cinder\include";..\include</AdditionalIncludeDirectories>
     </ResourceCompile>
     <Link>
       <AdditionalDependencies>cinder-$(PlatformToolset).lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(CINDER_DEV)\lib\msw\$(PlatformTarget);$(DSROOT)\Lib</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>"..\..\..\..\libs\Cinder\lib\msw\$(PlatformTarget)"</AdditionalLibraryDirectories>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <GenerateMapFile>true</GenerateMapFile>
       <SubSystem>Windows</SubSystem>
@@ -195,25 +195,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\include\Cinder-DSAPI\src\CiDSAPI.cpp" />
-    <ClCompile Include="..\src\WFTE_v2App.cpp" />
+    <ClCompile Include="..\src\FaceNoiseApp.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\Cinder-DSAPI\src\CiDSAPI.h" />
     <ClInclude Include="..\include\Resources.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\assets\WFTE_00_color_frag.glsl" />
-    <None Include="..\assets\WFTE_01_render_frag.glsl" />
-    <None Include="..\assets\WFTE_02_filter_frag.glsl" />
-    <None Include="..\assets\WFTE_03_resolve_frag.glsl" />
-    <None Include="..\assets\WFTE_04_hblur_frag.glsl" />
-    <None Include="..\assets\WFTE_04_vblur_frag.glsl" />
-    <None Include="..\assets\WFTE_inst_frag.glsl" />
-    <None Include="..\assets\WFTE_inst_vert.glsl" />
-    <None Include="..\assets\WFTE_mesh_frag.glsl" />
-    <None Include="..\assets\WFTE_mesh_vert.glsl" />
-    <None Include="..\assets\WFTE_vert.glsl" />
-    <None Include="..\assets\WFTE_vert_fbo.glsl" />
+    <None Include="..\assets\facenoise_frag.glsl" />
+    <None Include="..\assets\facenoise_vert.glsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

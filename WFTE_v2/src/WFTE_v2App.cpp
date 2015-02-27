@@ -13,6 +13,7 @@
 #include "cinder/Camera.h"
 #include "cinder/MayaCamUI.h"
 #include "cinder/params/Params.h"
+#include "cinder/TriMesh.h"
 #include "CiDSAPI.h"
 
 using namespace ci;
@@ -21,6 +22,7 @@ using namespace std;
 using namespace CinderDS;
 
 static ivec2 S_DIMS(480, 360);
+static ivec2 S_STEP(60, 40);
 
 class WFTE_v2App : public AppNative 
 {
@@ -52,7 +54,7 @@ private:
 		CloudPoint(vec3 pPos, vec4 pCol, vec2 pUv) :PPosition(pPos), PColor(pCol), PTexCoord(pUv){}
 	};
 
-	gl::BatchRef		mDrawObj;
+	gl::BatchRef		mCloudDrawObj;
 	gl::VboMeshRef		mPointCloud;
 	gl::VboRef			mVertexData;
 	geom::BufferLayout	mVertexAttribs;
@@ -69,9 +71,30 @@ private:
 	gl::FboRef			mLumTarget;		//step 2: blur brightness
 	gl::FboRef			mFilterTarget;
 	gl::FboRef			mFinalTarget;
+	
+	gl::GlslProgRef		mShaderHBlur;
+	gl::GlslProgRef		mShaderVBlur;
+	gl::FboRef			mHBlurTarget;
+	gl::FboRef			mVBlurTarget;
+
+	//Cube Mesh
+	gl::BatchRef		mMeshDrawObj;
+	gl::GlslProgRef		mMeshShader;
+	geom::Cube			mMeshCube;
+	gl::VboMeshRef		mMeshVbo;
+	gl::VboRef			mInstanceData;
+	geom::BufferLayout	mInstanceAttribs;
+	vector<vec3>		mMeshPoints;
+
+	gl::VboRef			mMeshVertexData;
+	gl::VboMeshRef		mMeshVertex;
+	geom::BufferLayout	mMeshVertexAttribs;
+	gl::BatchRef		mMeshVertexDraw;
+	gl::GlslProgRef		mMeshVertexShader;
+	vector<vec3>		mVertexPoints;
+	TriMeshRef			mVertexTriMesh;
 
 	CinderDSRef			mCinderDS;
-
 	CameraPersp			mCamera;
 	MayaCamUI			mMayaCam;
 
@@ -85,7 +108,8 @@ private:
 						mDepthMin,
 						mDepthMax,
 						mDrawSize,
-						mBloomSize;
+						mBloomSize,
+						mBlurSize;
 
 	Color				mMaskColor;
 };
@@ -125,6 +149,7 @@ void WFTE_v2App::setupGUI()
 	mDrawSize = 1.0f;
 	mBloomSize = 2.0f;
 	mMaskColor = Color(0.25f, 0.75f, 1.0f);
+	mBlurSize = 1.0f / 512.0f;
 
 	mGUI = params::InterfaceGl::create("Settings", vec2(250, 300));
 	mGUI->setPosition(vec2(20));
@@ -141,8 +166,7 @@ void WFTE_v2App::setupGUI()
 	mGUI->addParam("Exposure", &mExposure);
 	mGUI->addParam("Bloom Factor", &mBloomFactor);
 	mGUI->addParam("Scene Factor", &mSceneFactor);
-	
-
+	mGUI->addParam("Blur Amount", &mBlurSize);
 }
 
 void WFTE_v2App::setupShaders()
@@ -180,7 +204,35 @@ void WFTE_v2App::setupShaders()
 	}
 	catch (const gl::GlslProgExc &e)
 	{
-		console() << "Error loading tex resolve shader: " << endl;
+		console() << "Error loading resolve shader: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mShaderHBlur = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_04_hblur_frag.glsl"));
+		mShaderVBlur = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_04_vblur_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading blur shaders: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mMeshShader = gl::GlslProg::create(loadAsset("WFTE_inst_vert.glsl"), loadAsset("WFTE_inst_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading instance shaders: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mMeshVertexShader = gl::GlslProg::create(loadAsset("WFTE_mesh_vert.glsl"), loadAsset("WFTE_mesh_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading instance shaders: " << endl;
 		console() << e.what() << endl;
 	}
 }
@@ -199,6 +251,10 @@ void WFTE_v2App::setupDS()
 void WFTE_v2App::setupMesh()
 {
 	mPoints.clear();
+	mMeshPoints.clear();
+	mVertexPoints.clear();
+
+	mVertexTriMesh = TriMesh::create();
 	for (int dy = 0; dy < S_DIMS.y; ++dy)
 	{
 		for (int dx = 0; dx < S_DIMS.x; ++dx)
@@ -212,6 +268,12 @@ void WFTE_v2App::setupMesh()
 			float cu = dx / (float)S_DIMS.x;
 			float cv = dy / (float)S_DIMS.y;
 			mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(cr, cg, cb, 1.0), vec2(cu, cv)));
+			if (dx % S_STEP.x == 0 && dy % S_STEP.y == 0)
+			{
+				mMeshPoints.push_back(vec3(cx, cy, cz));
+				mVertexPoints.push_back(vec3(cx, cy, cz));
+				mVertexTriMesh->appendVertex(vec3(cx, cy, cz));
+			}
 		}
 	}
 
@@ -221,7 +283,20 @@ void WFTE_v2App::setupMesh()
 	mVertexAttribs.append(geom::TEX_COORD_0, 2, sizeof(CloudPoint), offsetof(CloudPoint, PTexCoord));
 
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
-	mDrawObj = gl::Batch::create(mPointCloud, mShaderColor);
+	mCloudDrawObj = gl::Batch::create(mPointCloud, mShaderColor);
+
+	mMeshCube = geom::Cube().size(vec3(0.025));
+	mInstanceData = gl::Vbo::create(GL_ARRAY_BUFFER, mMeshPoints, GL_DYNAMIC_DRAW);
+	mInstanceAttribs.append(geom::CUSTOM_0, 3, 0, 0, 1);
+
+	mMeshVbo = gl::VboMesh::create(mMeshCube);
+	mMeshVbo->appendVbo(mInstanceAttribs, mInstanceData);
+	mMeshDrawObj = gl::Batch::create(mMeshVbo, mMeshShader, { { geom::CUSTOM_0, "iPosition" } });
+
+	mMeshVertexData = gl::Vbo::create(GL_ARRAY_BUFFER, mVertexPoints, GL_DYNAMIC_DRAW);
+	mMeshVertexAttribs.append(geom::POSITION, 3, 0, 0, 0);
+	mMeshVertex = gl::VboMesh::create(mVertexPoints.size(), GL_TRIANGLE_STRIP, { { mMeshVertexAttribs, mMeshVertexData } });
+	mMeshVertexDraw = gl::Batch::create(mMeshVertex, mMeshVertexShader);
 }
 
 void WFTE_v2App::setupFBOs()
@@ -241,6 +316,12 @@ void WFTE_v2App::setupFBOs()
 	gl::Fbo::Format cFinalFormat;
 	cFinalFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA16F));
 	mFinalTarget = gl::Fbo::create(1280, 720, cFinalFormat);
+
+	gl::Fbo::Format cBlurFormat;
+	cBlurFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA16F));
+	mHBlurTarget = gl::Fbo::create(1280, 720, cBlurFormat);
+	mVBlurTarget = gl::Fbo::create(1280, 720, cBlurFormat);
+
 }
 
 void WFTE_v2App::mouseDown( MouseEvent event )
@@ -270,6 +351,8 @@ void WFTE_v2App::updatePointCloud()
 {
 	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
 	mPoints.clear();
+	mMeshPoints.clear();
+	mVertexPoints.clear();
 	int id = 0;
 	for (int dy = 0; dy < S_DIMS.y; ++dy)
 	{
@@ -285,6 +368,11 @@ void WFTE_v2App::updatePointCloud()
 				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
 				cUV.y = 1.0 - cUV.y;
 				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(mMaskColor.r, mMaskColor.g, mMaskColor.b,1), cUV));
+				if (dx % S_STEP.x == 0 && dy % S_STEP.y == 0)
+				{
+					mMeshPoints.push_back(vec3(cx, cy, cz));
+					mVertexPoints.push_back(vec3(cx, cy, cz));
+				}
 			}
 			id++;
 		}
@@ -292,11 +380,21 @@ void WFTE_v2App::updatePointCloud()
 
 	mVertexData->bufferData(mPoints.size()*sizeof(CloudPoint), mPoints.data(), GL_DYNAMIC_DRAW);
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
-	mDrawObj->replaceVboMesh(mPointCloud);
+	mCloudDrawObj->replaceVboMesh(mPointCloud);
+
+	mInstanceData->bufferData(mMeshPoints.size()*sizeof(vec3), mMeshPoints.data(), GL_DYNAMIC_DRAW);
+	mMeshVbo = gl::VboMesh::create(mMeshCube);
+	mMeshVbo->appendVbo(mInstanceAttribs, mInstanceData);
+	mMeshDrawObj->replaceVboMesh(mMeshVbo);
+
+	mMeshVertexData->bufferData(mVertexPoints.size()*sizeof(vec3), mVertexPoints.data(), GL_DYNAMIC_DRAW);
+	mMeshVertex = gl::VboMesh::create(mVertexPoints.size(), GL_TRIANGLE_STRIP, { { mMeshVertexAttribs, mMeshVertexData } });
+	mMeshVertexDraw->replaceVboMesh(mMeshVertex);
 }
 
 void WFTE_v2App::renderScene()
 {
+	gl::enableAdditiveBlending();
 	//Color VBO
 	mColorTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -304,21 +402,21 @@ void WFTE_v2App::renderScene()
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	gl::pointSize(mDrawSize);
-	mDrawObj->draw();
+	mCloudDrawObj->draw();
 	mColorTarget->unbindFramebuffer();
 	mTexRgb->unbind();
 
 	//Luminance VBO
 	mLumTarget->bindFramebuffer();
 	gl::clear(Color::black());
-	gl::viewport(ivec2(0), mColorTarget->getSize());
+	gl::viewport(ivec2(0), mLumTarget->getSize());
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	gl::pointSize(mBloomSize);
 	mShaderRender->uniform("mBloomMin", mBloomMin);
 	mShaderRender->uniform("mBloomMax", mBloomMax);
-	mDrawObj->replaceGlslProg(mShaderRender);
-	mDrawObj->draw();
+	mCloudDrawObj->replaceGlslProg(mShaderRender);
+	mCloudDrawObj->draw();
 	mLumTarget->unbindFramebuffer();
 	mTexRgb->unbind();
 
@@ -341,8 +439,8 @@ void WFTE_v2App::renderScene()
 	mLumTarget->bindTexture(0);
 	mFilterTarget->bindTexture(1);
 	mShaderResolve->bind();
-	mShaderResolve->uniform("mHdrTarget", 0);
-	mShaderResolve->uniform("mBloomTarget", 1);
+	mShaderResolve->uniform("mHdrTex", 0);
+	mShaderResolve->uniform("mBloomTex", 1);
 	mShaderResolve->uniform("mExposure", mExposure);
 	mShaderResolve->uniform("mBloomFactor", mBloomFactor);
 	mShaderResolve->uniform("mSceneFactor", mSceneFactor);
@@ -350,27 +448,54 @@ void WFTE_v2App::renderScene()
 	mLumTarget->unbindTexture();
 	mFilterTarget->unbindTexture();
 	mFinalTarget->unbindFramebuffer();
-	
+
+	//Blur H Stage
+	mHBlurTarget->bindFramebuffer();
+	gl::clear(Color::black());
+	gl::viewport(ivec2(0), mHBlurTarget->getSize());
+	gl::setMatricesWindow(getWindowSize());
+	mFinalTarget->bindTexture();
+	mShaderHBlur->bind();
+	mShaderHBlur->uniform("mBlurSize", mBlurSize);
+	gl::drawSolidRect(Rectf({ vec2(0), mFinalTarget->getSize() }));
+	mFilterTarget->unbindTexture();
+	mHBlurTarget->unbindFramebuffer();
+
+	//Blur V Stage
+	mVBlurTarget->bindFramebuffer();
+	gl::clear(Color::black());
+	gl::viewport(ivec2(0), mVBlurTarget->getSize());
+	gl::setMatricesWindow(getWindowSize());
+	mHBlurTarget->bindTexture();
+	mShaderVBlur->bind();
+	mShaderVBlur->uniform("mBlurSize", mBlurSize);
+	gl::drawSolidRect(Rectf({ vec2(0), mHBlurTarget->getSize() }));
+	mHBlurTarget->unbindTexture();
+	mVBlurTarget->unbindFramebuffer();
+	gl::disableAlphaBlending();
 }
 
 void WFTE_v2App::draw()
 {
 	gl::clear( Color( 0, 0, 0 ) );
 	gl::color(Color::white());
-
+	gl::enableAdditiveBlending();
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
-	mDrawObj->replaceGlslProg(mShaderColor);
-	gl::pointSize(1.0);
-	mDrawObj->draw();
+	mCloudDrawObj->replaceGlslProg(mShaderColor);
+	gl::pointSize(mDrawSize);
+	mCloudDrawObj->draw();
 	mTexRgb->unbind();
-	gl::setMatricesWindow(getWindowSize());
-	gl::enableAdditiveBlending();
-	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
+
+	//gl::enableWireframe();
+	//mMeshVertexDraw->draw();
+	gl::disableWireframe();
+	mMeshDrawObj->drawInstanced(mMeshPoints.size());
 
 	gl::setMatricesWindow(getWindowSize());
 	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
-
+	gl::draw(mVBlurTarget->getColorTexture(), vec2(0));
+	
 	mGUI->draw();
 }
 

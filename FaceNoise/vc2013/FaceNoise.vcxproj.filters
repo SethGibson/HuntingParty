@@ -13,21 +13,21 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
     </Filter>
-    <Filter Include="Source Files\shaders">
-      <UniqueIdentifier>{bd6fc957-3aa0-4ba4-b271-b477a3c9e072}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Source Files\blocks">
-      <UniqueIdentifier>{195d8f5c-78b4-4cb9-a659-ef0e5db0fce1}</UniqueIdentifier>
+      <UniqueIdentifier>{e3644692-a52e-443b-9213-2aac3120b38e}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\blocks\Cinder-DSAPI">
-      <UniqueIdentifier>{c4895712-3935-4d91-a298-32a4e5b7ac90}</UniqueIdentifier>
+      <UniqueIdentifier>{9b5d560d-b2ac-44ab-80bf-089ce1ab6faa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\shaders">
+      <UniqueIdentifier>{e22de181-934c-4f3d-9f85-63995ad9f566}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\WFTE_v2App.cpp">
+    <ClCompile Include="..\src\FaceNoiseApp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\WFTE_v2App.cpp">
+    <ClCompile Include="..\src\FaceNoiseApp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClInclude Include="..\include\Resources.h">
@@ -51,40 +51,10 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\assets\WFTE_vert.glsl">
+    <None Include="..\assets\facenoise_frag.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
-    <None Include="..\assets\WFTE_01_render_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_02_filter_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_03_resolve_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_00_color_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_vert_fbo.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_04_hblur_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_04_vblur_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_inst_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_inst_vert.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_mesh_frag.glsl">
-      <Filter>Source Files\shaders</Filter>
-    </None>
-    <None Include="..\assets\WFTE_mesh_vert.glsl">
+    <None Include="..\assets\facenoise_vert.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
   </ItemGroup>
