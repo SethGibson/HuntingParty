@@ -87,5 +87,8 @@
     <None Include="..\assets\WFTE_mesh_vert.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
+    <None Include="..\assets\WFTE_05_comp_frag.glsl">
+      <Filter>Source Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

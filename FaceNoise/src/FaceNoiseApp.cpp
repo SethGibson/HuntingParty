@@ -29,6 +29,7 @@ class FaceNoiseApp : public AppNative
 public:
 	void setup() override;
 	void mouseDown( MouseEvent event ) override;
+	void mouseDrag(MouseEvent event) override;
 	void update() override;
 	void draw() override;
 	void exit();
@@ -145,13 +146,18 @@ void FaceNoiseApp::setupAudio()
 
 void FaceNoiseApp::mouseDown( MouseEvent event )
 {
+	mMayaCam.mouseDown(event.getPos());
+}
+
+void FaceNoiseApp::mouseDrag(MouseEvent event)
+{
+	mMayaCam.mouseDrag(event.getPos(), event.isLeftDown(), false, event.isRightDown());
 }
 
 void FaceNoiseApp::update()
 {
 	mCinderDS->update();
 	mTexRgb->update(mCinderDS->getRgbFrame());
-	mMagSpectrum = mMonitorSpectralNode->getMagSpectrum();
 	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
 	mPoints.clear();
 	int id = 0;
@@ -162,13 +168,15 @@ void FaceNoiseApp::update()
 			float cVal = (float)cDepth[id];
 			if (cVal>100 && cVal < 1000 && dy % 2 == 0)
 			{
+				int aid = (int)lmap<float>(dy, 0, S_DIMS.y, 1023, 0);
+				float cAudio = mMagSpectrum[aid]*500.0f;
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
 
 				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
 				cUV.y = 1.0 - cUV.y;
-				mPoints.push_back(FacePoint(vec3(cx, cy, cz), cUV));
+				mPoints.push_back(FacePoint(vec3(cx, cy, cz+cAudio), cUV));
 			}
 			id++;
 		}

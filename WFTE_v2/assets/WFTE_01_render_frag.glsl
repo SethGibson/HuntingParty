@@ -11,8 +11,8 @@ void main()
 {
 	vec3 cColor = texture2D(mRgbTex, UV).rgb;
 	float Y = dot(cColor,vec3(0.299,0.587,0.144));
-
-	oColor = Color*vec4(cColor * 5.0 * smoothstep(mBloomMin,mBloomMax,Y),1.0);
+	float cAlpha = smoothstep(mBloomMin, mBloomMax, Y);
+	oColor = Color*vec4(cColor * 5.0 * cAlpha,Y);
 }
 
 //858 775 4985

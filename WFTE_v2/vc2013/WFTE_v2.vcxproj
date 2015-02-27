@@ -208,6 +208,7 @@
     <None Include="..\assets\WFTE_03_resolve_frag.glsl" />
     <None Include="..\assets\WFTE_04_hblur_frag.glsl" />
     <None Include="..\assets\WFTE_04_vblur_frag.glsl" />
+    <None Include="..\assets\WFTE_05_comp_frag.glsl" />
     <None Include="..\assets\WFTE_inst_frag.glsl" />
     <None Include="..\assets\WFTE_inst_vert.glsl" />
     <None Include="..\assets\WFTE_mesh_frag.glsl" />

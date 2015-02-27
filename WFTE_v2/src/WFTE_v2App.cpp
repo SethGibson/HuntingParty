@@ -94,6 +94,8 @@ private:
 	vector<vec3>		mVertexPoints;
 	TriMeshRef			mVertexTriMesh;
 
+	gl::GlslProgRef		mShaderComposite;
+
 	CinderDSRef			mCinderDS;
 	CameraPersp			mCamera;
 	MayaCamUI			mMayaCam;
@@ -109,7 +111,11 @@ private:
 						mDepthMax,
 						mDrawSize,
 						mBloomSize,
-						mBlurSize;
+						mBlurSizeX,
+						mBlurSizeY,
+						mColorAmt,
+						mFinalAmt,
+						mBlurAmt;
 
 	Color				mMaskColor;
 };
@@ -134,7 +140,7 @@ void WFTE_v2App::setup()
 
 	gl::enableDepthRead();
 	gl::enableDepthWrite();
-	gl::enableAdditiveBlending();
+
 }
 
 void WFTE_v2App::setupGUI()
@@ -149,7 +155,11 @@ void WFTE_v2App::setupGUI()
 	mDrawSize = 1.0f;
 	mBloomSize = 2.0f;
 	mMaskColor = Color(0.25f, 0.75f, 1.0f);
-	mBlurSize = 1.0f / 512.0f;
+	mBlurSizeX = 1.0f / 512.0f;
+	mBlurSizeY = 1.0f / 512.0f;
+	mColorAmt = 1.0f;
+	mFinalAmt = 1.0f;
+	mBlurAmt = 1.0f;
 
 	mGUI = params::InterfaceGl::create("Settings", vec2(250, 300));
 	mGUI->setPosition(vec2(20));
@@ -166,7 +176,11 @@ void WFTE_v2App::setupGUI()
 	mGUI->addParam("Exposure", &mExposure);
 	mGUI->addParam("Bloom Factor", &mBloomFactor);
 	mGUI->addParam("Scene Factor", &mSceneFactor);
-	mGUI->addParam("Blur Amount", &mBlurSize);
+	mGUI->addParam("Blur Amount X", &mBlurSizeX);
+	mGUI->addParam("Blur Amount Y", &mBlurSizeY);
+	mGUI->addParam("Color Layer", &mColorAmt);
+	mGUI->addParam("Lum Layer", &mFinalAmt);
+	mGUI->addParam("Blur Layer", &mBlurAmt);
 }
 
 void WFTE_v2App::setupShaders()
@@ -229,6 +243,15 @@ void WFTE_v2App::setupShaders()
 	try
 	{
 		mMeshVertexShader = gl::GlslProg::create(loadAsset("WFTE_mesh_vert.glsl"), loadAsset("WFTE_mesh_frag.glsl"));
+	}
+	catch (const gl::GlslProgExc &e)
+	{
+		console() << "Error loading instance shaders: " << endl;
+		console() << e.what() << endl;
+	}
+	try
+	{
+		mShaderComposite = gl::GlslProg::create(loadAsset("WFTE_vert_fbo.glsl"), loadAsset("WFTE_05_comp_frag.glsl"));
 	}
 	catch (const gl::GlslProgExc &e)
 	{
@@ -394,7 +417,7 @@ void WFTE_v2App::updatePointCloud()
 
 void WFTE_v2App::renderScene()
 {
-	gl::enableAdditiveBlending();
+	//gl::enableAdditiveBlending();
 	//Color VBO
 	mColorTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -402,9 +425,11 @@ void WFTE_v2App::renderScene()
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	gl::pointSize(mDrawSize);
+	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	mCloudDrawObj->draw();
-	mColorTarget->unbindFramebuffer();
 	mTexRgb->unbind();
+	mMeshDrawObj->drawInstanced(mMeshPoints.size());
+	mColorTarget->unbindFramebuffer();
 
 	//Luminance VBO
 	mLumTarget->bindFramebuffer();
@@ -417,8 +442,10 @@ void WFTE_v2App::renderScene()
 	mShaderRender->uniform("mBloomMax", mBloomMax);
 	mCloudDrawObj->replaceGlslProg(mShaderRender);
 	mCloudDrawObj->draw();
-	mLumTarget->unbindFramebuffer();
 	mTexRgb->unbind();
+	gl::disableAlphaBlending();
+	mMeshDrawObj->drawInstanced(mMeshPoints.size());
+	mLumTarget->unbindFramebuffer();
 
 	//Blur
 	mFilterTarget->bindFramebuffer();
@@ -431,6 +458,7 @@ void WFTE_v2App::renderScene()
 	mLumTarget->unbindTexture();
 	mFilterTarget->unbindFramebuffer();
 
+	
 	//Resolve
 	mFinalTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -448,7 +476,7 @@ void WFTE_v2App::renderScene()
 	mLumTarget->unbindTexture();
 	mFilterTarget->unbindTexture();
 	mFinalTarget->unbindFramebuffer();
-
+	
 	//Blur H Stage
 	mHBlurTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -456,11 +484,11 @@ void WFTE_v2App::renderScene()
 	gl::setMatricesWindow(getWindowSize());
 	mFinalTarget->bindTexture();
 	mShaderHBlur->bind();
-	mShaderHBlur->uniform("mBlurSize", mBlurSize);
+	mShaderHBlur->uniform("mBlurSize", mBlurSizeX);
 	gl::drawSolidRect(Rectf({ vec2(0), mFinalTarget->getSize() }));
-	mFilterTarget->unbindTexture();
+	mFinalTarget->unbindTexture();
 	mHBlurTarget->unbindFramebuffer();
-
+	
 	//Blur V Stage
 	mVBlurTarget->bindFramebuffer();
 	gl::clear(Color::black());
@@ -468,34 +496,43 @@ void WFTE_v2App::renderScene()
 	gl::setMatricesWindow(getWindowSize());
 	mHBlurTarget->bindTexture();
 	mShaderVBlur->bind();
-	mShaderVBlur->uniform("mBlurSize", mBlurSize);
+	mShaderVBlur->uniform("mBlurSize", mBlurSizeY);
 	gl::drawSolidRect(Rectf({ vec2(0), mHBlurTarget->getSize() }));
 	mHBlurTarget->unbindTexture();
 	mVBlurTarget->unbindFramebuffer();
-	gl::disableAlphaBlending();
+	
 }
 
 void WFTE_v2App::draw()
 {
+	
 	gl::clear( Color( 0, 0, 0 ) );
 	gl::color(Color::white());
-	gl::enableAdditiveBlending();
+	
+	/*
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	gl::pointSize(mDrawSize);
 	mCloudDrawObj->draw();
 	mTexRgb->unbind();
-
-	//gl::enableWireframe();
-	//mMeshVertexDraw->draw();
-	gl::disableWireframe();
-	mMeshDrawObj->drawInstanced(mMeshPoints.size());
-
+	gl::enableAlphaBlending(true);*/
 	gl::setMatricesWindow(getWindowSize());
-	gl::draw(mFinalTarget->getColorTexture(), vec2(0));
-	gl::draw(mVBlurTarget->getColorTexture(), vec2(0));
-	
+	mColorTarget->bindTexture(0);
+	mFinalTarget->bindTexture(1);
+	mVBlurTarget->bindTexture(2);
+	mShaderComposite->bind();
+	mShaderComposite->uniform("mTexColor", 0);
+	mShaderComposite->uniform("mTexFinal", 1);
+	mShaderComposite->uniform("mTexBlur", 2);
+	mShaderComposite->uniform("mColorAmt", mColorAmt);
+	mShaderComposite->uniform("mFinalAmt", mFinalAmt);
+	mShaderComposite->uniform("mBlurAmt", mBlurAmt);
+	gl::drawSolidRect(Rectf({ vec2(0), getWindowSize() }));
+	mColorTarget->unbindTexture();
+	mFinalTarget->unbindTexture();
+	mVBlurTarget->unbindTexture();
+
 	mGUI->draw();
 }
 

@@ -19,5 +19,5 @@ void main()
    sum += texture2D(mRgbTex, vec2(UV.x, UV.y + 3.0*mBlurSize)) * 0.09;
    sum += texture2D(mRgbTex, vec2(UV.x, UV.y + 4.0*mBlurSize)) * 0.05;
  
-   oColor = sum;
+   oColor = vec4(sum.rgb,sum.b);
 }
