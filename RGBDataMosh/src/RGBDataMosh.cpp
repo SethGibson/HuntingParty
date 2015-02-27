@@ -258,6 +258,8 @@ public:
 
 	std::vector<vec4> subsampledColors;
 	vector<vec3> rgbPoints;
+	
+	bool PauseRGBCapture = false;
 };
 
 
@@ -470,7 +472,8 @@ void HP_WaitingRTApp::update()
 	mDSAPI->update();
 
 	mDepthBuffer = mDSAPI->getDepthFrame();
-	mRgbBuffer = mDSAPI->getRgbFrame();
+	if (!PauseRGBCapture)
+		mRgbBuffer = mDSAPI->getRgbFrame();
 
 	// update our instance positions; map our instance data VBO, write new positions, unmap
 	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
@@ -705,6 +708,10 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 			rgbPoints.clear();
 			//rgbPoints = std::vector<vec3>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
+	}
+	else if (event.getChar() == 'z')
+	{
+		PauseRGBCapture = !PauseRGBCapture;
 	}
 	
 }
