@@ -57,5 +57,11 @@
     <None Include="..\assets\WFTE_frag.glsl">
       <Filter>Source Files\shaders</Filter>
     </None>
+    <None Include="..\assets\WFTE_bloom_vert.glsl">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="..\assets\WFTE_bloom_frag.glsl">
+      <Filter>Source Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

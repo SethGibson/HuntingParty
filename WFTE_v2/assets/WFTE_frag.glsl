@@ -6,5 +6,5 @@ out vec4 oColor;
 
 void main()
 {
-	oColor = Color*texture2D(mRgbTex,UV);
+	oColor = Color*2*texture2D(mRgbTex,UV);
 }

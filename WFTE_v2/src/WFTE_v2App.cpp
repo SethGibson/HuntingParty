@@ -38,6 +38,7 @@ private:
 
 	void updateTextures();
 	void updatePointCloud();
+	void renderScene();
 
 	struct CloudPoint
 	{
@@ -53,10 +54,10 @@ private:
 	geom::BufferLayout mVertexAttribs;
 	vector<CloudPoint> mPoints;
 
-	gl::GlslProgRef mShader;
+	gl::GlslProgRef mBlurShader, mColorShader;
 	gl::TextureRef mTexRgb;
 
-	gl::FboRef mFbo;
+	gl::FboRef mBlurTarget;
 	CinderDSRef mCinderDS;
 
 	CameraPersp mCamera;
@@ -77,6 +78,11 @@ void WFTE_v2App::setup()
 	mMayaCam.setCurrentCam(mCamera);
 
 	mTexRgb = gl::Texture::create(640, 480);
+	mBlurTarget = gl::Fbo::create(1280, 720);
+
+	gl::enableDepthRead();
+	gl::enableDepthWrite();
+	gl::enableAdditiveBlending();
 }
 
 void WFTE_v2App::setupDS()
@@ -94,7 +100,8 @@ void WFTE_v2App::setupMesh()
 {
 	try
 	{
-		mShader = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_frag.glsl"));
+		mBlurShader = gl::GlslProg::create(loadAsset("WFTE_bloom_vert.glsl"), loadAsset("WFTE_bloom_frag.glsl"));
+		mColorShader = gl::GlslProg::create(loadAsset("WFTE_vert.glsl"), loadAsset("WFTE_frag.glsl"));
 	}
 	catch (const gl::GlslProgExc &e)
 	{
@@ -125,7 +132,7 @@ void WFTE_v2App::setupMesh()
 	mVertexAttribs.append(geom::TEX_COORD_0, 2, sizeof(CloudPoint), offsetof(CloudPoint, PTexCoord));
 
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
-	mDrawObj = gl::Batch::create(mPointCloud, mShader);
+	mDrawObj = gl::Batch::create(mPointCloud, mBlurShader);
 }
 
 void WFTE_v2App::mouseDown( MouseEvent event )
@@ -143,6 +150,7 @@ void WFTE_v2App::update()
 	mCinderDS->update();
 	updateTextures();
 	updatePointCloud();
+	renderScene();
 }
 
 void WFTE_v2App::updateTextures()
@@ -180,18 +188,34 @@ void WFTE_v2App::updatePointCloud()
 	mVertexData->bufferData(mPoints.size()*sizeof(CloudPoint), mPoints.data(), GL_DYNAMIC_DRAW);
 	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
 	mDrawObj->replaceVboMesh(mPointCloud);
+	mDrawObj->replaceGlslProg(mBlurShader);
+}
+
+void WFTE_v2App::renderScene()
+{
+	gl::ScopedFramebuffer cFBO(mBlurTarget);
+	gl::clear(Color::black());
+	gl::ScopedViewport cVP(ivec2(0), mBlurTarget->getSize());
+
+	gl::setMatrices(mMayaCam.getCamera());
+	gl::ScopedTextureBind cTex(mTexRgb);
+	mDrawObj->draw();
+
+	gl::color(Color::white());
 }
 
 void WFTE_v2App::draw()
 {
-	gl::clear( Color( 0, 0, 0 ) ); 
-	gl::enableDepthRead();
-	gl::enableDepthWrite();
-	gl::enableAdditiveBlending();
+	gl::clear( Color( 0, 0, 0 ) );
+	gl::color(Color::white());
 	gl::setMatrices(mMayaCam.getCamera());
-
-	gl::ScopedTextureBind cTex(mTexRgb);
+	mTexRgb->bind();
+	mDrawObj->replaceGlslProg(mColorShader);
 	mDrawObj->draw();
+	mTexRgb->unbind();
+	gl::enableAdditiveBlending();
+	gl::setMatricesWindow(getWindowSize());
+	gl::draw(mBlurTarget->getColorTexture(), vec2(0));
 }
 
 void WFTE_v2App::exit()

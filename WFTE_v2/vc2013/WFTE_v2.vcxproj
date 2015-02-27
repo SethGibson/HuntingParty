@@ -202,6 +202,8 @@
     <ClInclude Include="..\include\Resources.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\assets\WFTE_bloom_frag.glsl" />
+    <None Include="..\assets\WFTE_bloom_vert.glsl" />
     <None Include="..\assets\WFTE_frag.glsl" />
     <None Include="..\assets\WFTE_vert.glsl" />
   </ItemGroup>
