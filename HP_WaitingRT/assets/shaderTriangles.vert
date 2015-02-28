@@ -65,10 +65,7 @@ void main( void )
 {
 	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (ciPosition)).xyz, ciPosition.w) );
 	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 100) / (2500 - 100));
-	Color 		=  vec4(
-						0.4, 0.4, 0.4,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
-						1.0
-					   );
+	Color 		= ciColor;
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }

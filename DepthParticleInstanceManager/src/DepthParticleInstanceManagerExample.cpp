@@ -219,14 +219,7 @@ public:
 	std::vector<vec3> mPreviousValidDepthCoord;
 
 	DyingParticlesManager mDyingParticleManager;
-	//std::ofstream out;
-
-	depthf_Handle mDepthFilter;
-	//uint16_t* zAligned;
-
-	int lowThreshold = 4;	// low = 4; high = 6 gives proper outlines
-	int highThreshold = 6;	// low = 4; high = 5 gives a sweet interior outliney effect, and fixes the back-estimation
-
+	
 	std::vector<int> mHogCounts;
 	std::vector<long> mHogTotals;
 	const float HogStartDepth = 500;
@@ -262,15 +255,6 @@ void HP_WaitingRTApp::setup()
 
 	width = mDSAPI->getDepthWidth();
 	height = mDSAPI->getDepthHeight();
-	/*
-	//width = 480;
-	//height = 360;
-
-	//mDepthFilter = depthf_Create(DEPTH_FILTER_KNN, width, height);
-	//int rgbW = mDSAPI->getDSAPI()->accessThird()->thirdWidth();
-	//int rgbH = mDSAPI->getDSAPI()->accessThird()->thirdHeight();
-	//zAligned = new uint16_t[rgbW * rgbH];
-	*/
 
 	//mCam.lookAt(vec3(0, CAMERA_Y_RANGE.first, 0), vec3(0));
 	vec2 cFOVs = mDSAPI->getDepthFOVs();
@@ -489,7 +473,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					subsampledAverageDepth);
 
-				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+				vec3 worldPos = mDSAPI->getZCameraSpacePoint(subsampledDepthPoint);
 
 				*positions++ = worldPos;
 				*scales++ = 0.5f;//0.3f;
@@ -733,7 +717,7 @@ void HP_WaitingRTApp::SetupBackParticlesDraw(std::vector<float> backParticleDept
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					backParticleDepths[x + (y * particleArrayWidth)]);
 
-				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+				vec3 worldPos = mDSAPI->getZCameraSpacePoint(subsampledDepthPoint);
 
 				*backPositionsVBO++ = worldPos;
 				*backScalesVBO++ = backParticleScales[x + (y * particleArrayWidth)];
