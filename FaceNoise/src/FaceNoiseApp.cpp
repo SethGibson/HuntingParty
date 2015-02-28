@@ -192,7 +192,8 @@ void FaceNoiseApp::draw()
 {
 	gl::clear( Color( 0, 0, 0 ) ); 
 	gl::setMatrices(mMayaCam.getCamera());
-
+	gl::enableAdditiveBlending();
+	gl::pointSize(2.0f);
 	gl::ScopedTextureBind cRgb(mTexRgb);
 	mDrawObj->draw();
 }
