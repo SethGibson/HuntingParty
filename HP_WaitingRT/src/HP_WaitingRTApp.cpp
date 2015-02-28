@@ -57,7 +57,7 @@ enum BackParticleSetting
 const static int MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE = 75000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
 const static float DEATH_LIFETIME_IN_SECONDS = 3.5; //total time until dying particle instances expire
 const static int SECONDS_BETWEEN_NEW_SPAWNS = 0.5;
-const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
+const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 8; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
 const static int VARIABLE_CAP = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
 const static int DESIRED_EDGE_NUM_CAP = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
 
@@ -188,11 +188,13 @@ public:
 
 	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, vec4 *triangleColors, float elapsed, BackParticleSetting backSetting);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
-	vec3 GetSuperPixelAveragePosition(std::vector<uint16_t> averageDepths, int width, int subsampleWindowSize, int x, int y);
 
 	void SetupBackParticlesDraw(std::vector<float> backParticlePositions, std::vector<float> backParticleScales, vec3 *backPositionsVBO, float *backScalesVBO, BackParticleSetting particlesSetting, int particleArrayWidth, int particleArrayHeight);
 
 	void GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int depthHeight, int lowThresh, int highThresh, Mat &cannyEdgePixels, EdgeCloud<int> &edgeCloud);
+	std::vector<vec4> GetRGBSubsampledColors(std::vector<uint16_t> subsampledDepths, int subsampledWidth, int subsampledHeight);
+	void SetupTriangles(std::vector<uint16_t> &subsampledDepths, std::vector<vec4> &subsampledColors, int subsampleWidth, int subsampledHeight, vec3* &trianglePositions, vec4* &triangleColors, uint16_t* &triangleIndices, int x, int y);
+	void GLDrawTriangles();
 
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
@@ -262,7 +264,9 @@ public:
 	bool DrawDyingParticles = true;
 	bool DrawFrontParticles = true;
 	bool DrawTriangles = false;
+	bool DrawBatchTriangles = false;
 	bool MaskFrontParticles = false;
+	bool ModuloTriangleDirections = true;
 };
 
 
@@ -338,8 +342,12 @@ void HP_WaitingRTApp::setup()
 			vec3 pos = vec3(instanceX * vec3(1, 0, 0) + instanceY * vec3(0, 0, 1));
 			positions.push_back(pos);
 			backPositions.push_back(pos);
+
 			trianglePositions.push_back(pos);
-			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for every vert
+			trianglePositions.push_back(pos);
+			triangleIndices.resize(triangleIndices.size() + 6, 0); //+6 because 3 indices per triangle, 2 triangles per pixel.
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for upper left triangle
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for bottom right triangle
 
 			cubeScales.push_back(randFloat(0.2, 5));
 			fillerScales.push_back(randFloat(0.2, 5));
@@ -348,7 +356,6 @@ void HP_WaitingRTApp::setup()
 			mCurrentlyHasDyingInstance.push_back(false);
 			mPreviousValidDepthCoord.push_back(pos);
 
-			triangleIndices.resize(triangleIndices.size() + 12, 0); //+12 because 3 indices per triangle, 4 triangles (up/down/left/right) per pixel.
 
 			
 		}
@@ -415,24 +422,20 @@ void HP_WaitingRTApp::setup()
 
 
 
-		//3 indices for each triangle, 2 triangles for each pixel in the buffer (up/down/left/right)
-	mTriangleIndicesVbo = gl::Vbo::create(GL_ELEMENT_ARRAY_BUFFER, trianglePositions.size() * 3 * 2 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
+		//3 indices for each triangle, 2 triangles per position
+	mTriangleIndicesVbo = gl::Vbo::create(GL_ELEMENT_ARRAY_BUFFER, trianglePositions.size() * 3 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
 
 	geom::BufferLayout trianglePositionsLayout;
 	trianglePositionsLayout.append(geom::Attrib::POSITION, 3, 0, 0, 0);
 
-	pair<geom::BufferLayout, gl::VboRef> myPair(trianglePositionsLayout, mTrianglePositionsVbo);
-	
+	geom::BufferLayout triangleColorsLayout;
+	triangleColorsLayout.append(geom::Attrib::COLOR, 4, 0, 0, 0);
+
 	//mTriangleColorsVbo ....? use vbo of color in layout???
 	
-	std::vector<std::pair<geom::BufferLayout, gl::VboRef>> triangleRefVec;
-	triangleRefVec.push_back(myPair);
 	mTrianglesVboMesh = gl::VboMesh::create(
-		(uint32_t)trianglePositions.size(), GL_TRIANGLES, triangleRefVec, (uint32_t)trianglePositions.size() * 3 * 2, GL_UNSIGNED_SHORT, mTriangleIndicesVbo);
+		(uint32_t)trianglePositions.size(), GL_TRIANGLES, { { trianglePositionsLayout, mTrianglePositionsVbo }, { triangleColorsLayout, mTriangleColorsVbo } }, (uint32_t)trianglePositions.size() * 3, GL_UNSIGNED_SHORT, mTriangleIndicesVbo);
 	mBatchTriangles = gl::Batch::create(mTrianglesVboMesh, mGlslTriangles);
-
-
-
 
 
 	gl::enableDepthWrite();
@@ -586,6 +589,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	bool kdIndexReady = (index.size() > 0);
 	/* END OF CANNY EDGE BUILDING */
 
+	std::vector<vec4> subsampledColors = GetRGBSubsampledColors(subsampledDepths, subsampledWidth, subsampledHeight);
 
 	uint32_t currentTotalDepth = 0;
 
@@ -593,57 +597,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	{
 		for (int x = 0; x < subsampledWidth; x++)
 		{			
-			if (DrawTriangles)
-			{
-				vec3 trianglePoint = vec3(
-					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
-					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
-					subsampledDepths[x + (y * subsampledWidth)]);
-				vec3 p = mDSAPI->getDepthSpacePoint(trianglePoint);
-				*trianglePositions++ = p;
-
-
-
-				float zImage[] = { static_cast<float>(x * mDepthSubsampleSize), static_cast<float>(y * mDepthSubsampleSize), static_cast<float>(subsampledDepths[x + (y * subsampledWidth)]) }, zCamera[3], thirdCamera[3], thirdImage[2];
-				DSTransformFromZImageToZCamera(zIntrin, zImage, zCamera);
-				DSTransformFromZCameraToRectThirdCamera(zToThirdTrans, zCamera, thirdCamera);
-				DSTransformFromThirdCameraToRectThirdImage(thirdIntrin, thirdCamera, thirdImage);
-				
-				if (zImage[2] != 0)
-				{
-					uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
-					uint8_t g = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 1];
-					uint8_t b = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 2];
-					*triangleColors++ = vec4((float)r / (float)255, (float)g / (float)255, (float)b / (float)255, 1.0);
-				}
-				else
-				{
-					*triangleColors++ = vec4(0, 0, 0, 0);
-				}
-
-				std::vector<pair<bool, uint16_t>> windowFromTopLeft = getSquareFromTopLeft<uint16_t>(subsampledDepths, x, y, subsampledWidth, subsampledHeight, mCam.getFarClip());
-				if (windowFromTopLeft[2].first &&
-					windowFromTopLeft[1].first &&
-					windowFromTopLeft[0].first)
-				{
-
-					*triangleIndices++ = windowFromTopLeft[2].second;
-					*triangleIndices++ = windowFromTopLeft[1].second;
-					*triangleIndices++ = windowFromTopLeft[0].second;
-
-					numberTrianglesToDraw++;
-				}
-				if (windowFromTopLeft[2].first &&
-					windowFromTopLeft[3].first &&
-					windowFromTopLeft[1].first)
-				{
-					*triangleIndices++ = windowFromTopLeft[2].second;
-					*triangleIndices++ = windowFromTopLeft[3].second;
-					*triangleIndices++ = windowFromTopLeft[1].second;
-
-					numberTrianglesToDraw++;
-				}
-			}
+			SetupTriangles(subsampledDepths, subsampledColors, subsampledWidth, subsampledHeight, trianglePositions, triangleColors, triangleIndices, x, y);
 			
 
 			float subsampledAverageDepth = subsampledDepths[(y * subsampledWidth) + x];
@@ -658,7 +612,7 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					subsampledAverageDepth);
 
-				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+				vec3 worldPos = mDSAPI->getZCameraSpacePoint(subsampledDepthPoint);
 
 				*positions++ = worldPos;
 
@@ -797,77 +751,7 @@ void HP_WaitingRTApp::draw()
 {
 	gl::clear(Color::black());
 
-	if (DrawTriangles)
-	{
-		vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->map(GL_READ_ONLY);
-		uint16_t *triangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
-		vec4 *triangleColors = (vec4*)mTriangleColorsVbo->map(GL_READ_ONLY);
-
-		//GLuint positions;
-		//glGenBuffers(1, &positions);
-		//glBindBuffer(GL_ARRAY_BUFFER, positions);
-		//glBufferData(GL_ARRAY_BUFFER, numberTrianglesToDraw * sizeof(vec3), trianglePositions, GL_DYNAMIC_DRAW);
-
-		//GLuint indices;
-		//glGenBuffers(1, &indices);
-		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
-		//glBufferData(GL_ELEMENT_ARRAY_BUFFER, numberTrianglesToDraw * 3 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
-
-		//
-		//glUseProgram(mGlsl->getHandle());
-		//
-
-		//glBindBuffer(GL_ARRAY_BUFFER, positions);
-		//glVertexAttribPointer(positions, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), trianglePositions);
-		//glEnableVertexAttribArray(positions);
-
-		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
-		//glVertexAttribPointer(indices, 3, GL_FLOAT, GL_FALSE, sizeof(uint16_t), trangleIndices);
-		//glVertexAttribDivisor(indices, 3);
-		//glEnableVertexAttribArray(indices);
-
-		//glDrawElements(GL_TRIANGLES, numberTrianglesToDraw, GL_UNSIGNED_SHORT, trangleIndices);
-		//glDeleteBuffers(1, &indices);
-		//glDeleteBuffers(1, &positions);
-
-
-		////mTriangleIndicesVbo->bufferData(numberTrianglesToDraw * 3 * 2 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
-
-		gl::begin(GL_TRIANGLES);
-		for (int i = 0; i < numberTrianglesToDraw; i++)
-		{
-			vec3 ab(trianglePositions[triangleIndices[(i * 3) + 1]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
-			vec3 ac(trianglePositions[triangleIndices[(i * 3) + 2]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
-			vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
-			
-			//vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
-			//vec3 b = trianglePositions[trangleIndices[(i * 3) + 1]];
-			//vec3 c = trianglePositions[trangleIndices[(i * 3) + 2]];
-			//float averageDepth = (a.z + b.z + c.z) / 3;
-			//averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
-			//gl::color(averageDepth, averageDepth, averageDepth, 0.75);
-			
-			vec4 c1 = triangleColors[triangleIndices[(i * 3) + 0]];
-			vec4 c2 = triangleColors[triangleIndices[(i * 3) + 1]];
-			vec4 c3 = triangleColors[triangleIndices[(i * 3) + 2]];
-
-			vec4 cAvg = vec4(c1 + c2 + c3);
-			cAvg /= 3;
-
-			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
-			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
-			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
-
-			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 0]]);
-			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 1]]);
-			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 2]]);
-		}
-		gl::end();
-
-		mTrianglePositionsVbo->unmap();
-		mTriangleIndicesVbo->unmap();
-		mTriangleColorsVbo->unmap();
-	}
+	GLDrawTriangles();
 
 	gl::setMatrices(mMayaCam.getCamera());
 
@@ -925,10 +809,11 @@ void HP_WaitingRTApp::draw()
 
 	//if (DrawTriangles)
 	//{
-		//mGlslTriangles->bind();
-		//mGlslTriangles->uniform("rotationMatrix", blah);
+	//	mGlslTriangles->bind();
+	//	mGlslTriangles->uniform("rotationMatrix", blah);
 
-		//mBatchTriangles->drawInstanced(numberTrianglesToDraw);
+	//	//mBatchTriangles->drawInstanced(numberTrianglesToDraw);
+	//	mBatchTriangles->draw();
 	//}
 
 
@@ -996,9 +881,17 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 	else if (event.getChar() == 'f'){
 		MaskFrontParticles = !MaskFrontParticles;
 	}
+	else if (event.getChar() == 'g'){
+		ModuloTriangleDirections = !ModuloTriangleDirections;
+	}
 	else if (event.getChar() == 'h'){
 		DrawTriangles = !DrawTriangles;
 	}
+	else if (event.getChar() == 'j'){
+		DrawBatchTriangles = !DrawBatchTriangles;
+	}
+
+	
 }
 
 void HP_WaitingRTApp::mouseDown(MouseEvent event)
@@ -1369,7 +1262,7 @@ void HP_WaitingRTApp::SetupBackParticlesDraw(std::vector<float> backParticleDept
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					backParticleDepths[x + (y * particleArrayWidth)]);
 
-				vec3 worldPos = mDSAPI->getDepthSpacePoint(subsampledDepthPoint);
+				vec3 worldPos = mDSAPI->getZCameraSpacePoint(subsampledDepthPoint);
 
 				*backPositionsVBO++ = worldPos;
 				*backScalesVBO++ = backParticleScales[x + (y * particleArrayWidth)];
@@ -1455,6 +1348,228 @@ void HP_WaitingRTApp::GetKDEdgeIndex(uint16_t* depthFrame, int depthWidth, int d
 	//depthf_Filter(mDepthFilter, depth, rgb, remapZ);	// comment this block out
 	//depth = remapZ;										//
 	*/
+}
+
+std::vector<vec4> HP_WaitingRTApp::GetRGBSubsampledColors(std::vector<uint16_t> subsampledDepths, int subsampledWidth, int subsampledHeight)
+{
+	std::vector<vec4> subsampledColors;
+
+	for (int y = 0; y < subsampledHeight; y++)
+	{
+		for (int x = 0; x < subsampledWidth; x++)
+		{
+			float zImage[] = { static_cast<float>(x * mDepthSubsampleSize), static_cast<float>(y * mDepthSubsampleSize), static_cast<float>(subsampledDepths[x + (y * subsampledWidth)]) }, zCamera[3], thirdCamera[3], thirdImage[2];
+			DSTransformFromZImageToZCamera(zIntrin, zImage, zCamera);
+			DSTransformFromZCameraToRectThirdCamera(zToThirdTrans, zCamera, thirdCamera);
+			DSTransformFromThirdCameraToRectThirdImage(thirdIntrin, thirdCamera, thirdImage);
+
+			if (zImage[2] != 0) //depth is valid
+			{
+				uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
+				uint8_t g = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 1];
+				uint8_t b = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 2];
+				subsampledColors.push_back(vec4((float)r / (float)255, (float)g / (float)255, (float)b / (float)255, 1.0));
+			}
+			else
+			{
+				subsampledColors.push_back(vec4(0, 0, 0, 0));
+			}
+		}
+	}
+
+	return subsampledColors;
+}
+
+void HP_WaitingRTApp::SetupTriangles(std::vector<uint16_t> &subsampledDepths, std::vector<vec4> &subsampledColors, int subsampledWidth, int subsampledHeight, vec3* &trianglePositions, vec4* &triangleColors, uint16_t* &triangleIndices, int x, int y)
+{
+	if (DrawTriangles == false)
+	{
+		return;
+	}
+
+	vec3 trianglePoint = vec3(
+		((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+		((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+		subsampledDepths[x + (y * subsampledWidth)]);
+	vec3 p = mDSAPI->getZCameraSpacePoint(trianglePoint);
+
+	*trianglePositions++ = p;
+	*trianglePositions++ = p;
+	vec4 triColor1(0, 0, 0, 0);
+	vec4 triColor2(0, 0, 0, 0);
+
+	std::vector<pair<bool, uint16_t>> windowFromTopLeft = getSquareFromTopLeft<uint16_t>(subsampledDepths, x, y, subsampledWidth, subsampledHeight, mCam.getFarClip());
+
+	if ((x + y) % 2 && ModuloTriangleDirections)
+	{ //if it's an odd index, setup triangles to be Top Right and/or Bottom Left
+		if (windowFromTopLeft[0].first &&
+			windowFromTopLeft[3].first &&
+			windowFromTopLeft[1].first)
+		{
+
+			*triangleIndices++ = windowFromTopLeft[0].second * 2;
+			*triangleIndices++ = windowFromTopLeft[3].second * 2;
+			*triangleIndices++ = windowFromTopLeft[1].second * 2;
+
+			vec4 c1 = subsampledColors[windowFromTopLeft[0].second];
+			vec4 c2 = subsampledColors[windowFromTopLeft[3].second];
+			vec4 c3 = subsampledColors[windowFromTopLeft[1].second];
+
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+			triColor1 = cAvg;
+
+			numberTrianglesToDraw++;
+		}
+		if (windowFromTopLeft[0].first &&
+			windowFromTopLeft[3].first &&
+			windowFromTopLeft[2].first)
+		{
+			*triangleIndices++ = windowFromTopLeft[0].second * 2 + 1;
+			*triangleIndices++ = windowFromTopLeft[3].second * 2 + 1;
+			*triangleIndices++ = windowFromTopLeft[2].second * 2 + 1;
+
+			vec4 c1 = subsampledColors[windowFromTopLeft[0].second];
+			vec4 c2 = subsampledColors[windowFromTopLeft[3].second];
+			vec4 c3 = subsampledColors[windowFromTopLeft[2].second];
+
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+			triColor2 = cAvg;
+
+			numberTrianglesToDraw++;
+		}
+	}
+	else
+	{ //if it's an even index, setup triangles to be Top Left and/or Bottom Right
+		if (windowFromTopLeft[2].first &&
+			windowFromTopLeft[1].first &&
+			windowFromTopLeft[0].first)
+		{
+
+			*triangleIndices++ = windowFromTopLeft[2].second * 2;
+			*triangleIndices++ = windowFromTopLeft[1].second * 2;
+			*triangleIndices++ = windowFromTopLeft[0].second * 2;
+
+			vec4 c1 = subsampledColors[windowFromTopLeft[2].second];
+			vec4 c2 = subsampledColors[windowFromTopLeft[1].second];
+			vec4 c3 = subsampledColors[windowFromTopLeft[0].second];
+
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+			triColor1 = cAvg;
+
+			numberTrianglesToDraw++;
+		}
+		if (windowFromTopLeft[2].first &&
+			windowFromTopLeft[3].first &&
+			windowFromTopLeft[1].first)
+		{
+			*triangleIndices++ = windowFromTopLeft[2].second * 2 + 1;
+			*triangleIndices++ = windowFromTopLeft[3].second * 2 + 1;
+			*triangleIndices++ = windowFromTopLeft[1].second * 2 + 1;
+
+			vec4 c1 = subsampledColors[windowFromTopLeft[2].second];
+			vec4 c2 = subsampledColors[windowFromTopLeft[3].second];
+			vec4 c3 = subsampledColors[windowFromTopLeft[1].second];
+
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+			triColor2 = cAvg;
+
+			numberTrianglesToDraw++;
+		}
+	}
+
+	*triangleColors++ = triColor1;
+	*triangleColors++ = triColor2;
+}
+
+void HP_WaitingRTApp::GLDrawTriangles()
+{
+	if (DrawTriangles)
+	{
+		if (DrawBatchTriangles)
+		{
+			mGlslTriangles->bind();
+			mGlslTriangles->uniform("rotationMatrix", glm::mat4());
+
+			//mBatchTriangles->drawInstanced(numberTrianglesToDraw);
+			mBatchTriangles->draw();
+		}
+		else
+		{
+		vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->map(GL_READ_ONLY);
+		uint16_t *triangleIndices = (uint16_t*)mTriangleIndicesVbo->map(GL_READ_ONLY);
+		vec4 *triangleColors = (vec4*)mTriangleColorsVbo->map(GL_READ_ONLY);
+
+		//GLuint positions;
+		//glGenBuffers(1, &positions);
+		//glBindBuffer(GL_ARRAY_BUFFER, positions);
+		//glBufferData(GL_ARRAY_BUFFER, numberTrianglesToDraw * sizeof(vec3), trianglePositions, GL_DYNAMIC_DRAW);
+
+		//GLuint indices;
+		//glGenBuffers(1, &indices);
+		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+		//glBufferData(GL_ELEMENT_ARRAY_BUFFER, numberTrianglesToDraw * 3 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
+
+		//
+		//glUseProgram(mGlsl->getHandle());
+		//
+
+		//glBindBuffer(GL_ARRAY_BUFFER, positions);
+		//glVertexAttribPointer(positions, 3, GL_FLOAT, GL_FALSE, sizeof(vec3), trianglePositions);
+		//glEnableVertexAttribArray(positions);
+
+		//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indices);
+		//glVertexAttribPointer(indices, 3, GL_FLOAT, GL_FALSE, sizeof(uint16_t), trangleIndices);
+		//glVertexAttribDivisor(indices, 3);
+		//glEnableVertexAttribArray(indices);
+
+		//glDrawElements(GL_TRIANGLES, numberTrianglesToDraw, GL_UNSIGNED_SHORT, trangleIndices);
+		//glDeleteBuffers(1, &indices);
+		//glDeleteBuffers(1, &positions);
+
+
+		////mTriangleIndicesVbo->bufferData(numberTrianglesToDraw * 3 * 2 * sizeof(uint16_t), trangleIndices, GL_DYNAMIC_DRAW);
+
+		gl::begin(GL_TRIANGLES);
+		for (int i = 0; i < numberTrianglesToDraw; i++)
+		{
+			vec3 ab(trianglePositions[triangleIndices[(i * 3) + 1]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
+			vec3 ac(trianglePositions[triangleIndices[(i * 3) + 2]] - trianglePositions[triangleIndices[(i * 3) + 0]]);
+			vec3 n = vec3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
+
+			//vec3 a = trianglePositions[trangleIndices[(i * 3) + 0]];
+			//vec3 b = trianglePositions[trangleIndices[(i * 3) + 1]];
+			//vec3 c = trianglePositions[trangleIndices[(i * 3) + 2]];
+			//float averageDepth = (a.z + b.z + c.z) / 3;
+			//averageDepth = lmap<float>(averageDepth, 500, 2000, 0, 1);
+			//gl::color(averageDepth, averageDepth, averageDepth, 0.75);
+
+			vec4 c1 = triangleColors[triangleIndices[(i * 3) + 0]];
+			vec4 c2 = triangleColors[triangleIndices[(i * 3) + 1]];
+			vec4 c3 = triangleColors[triangleIndices[(i * 3) + 2]];
+
+			vec4 cAvg = vec4(c1 + c2 + c3);
+			cAvg /= 3;
+
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+			gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 0]]);
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 1]]);
+			gl::vertex(trianglePositions[triangleIndices[(i * 3) + 2]]);
+		}
+		gl::end();
+
+		mTrianglePositionsVbo->unmap();
+		mTriangleIndicesVbo->unmap();
+		mTriangleColorsVbo->unmap();
+
+		}
+	}
 }
 
 

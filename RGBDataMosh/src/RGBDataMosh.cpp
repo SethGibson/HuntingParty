@@ -19,6 +19,8 @@
 #include "cinder/Rand.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "CinderOpenCV.h"
+#include "opencv2\gpu\gpu.hpp"
+#include "opencv2\videostab\optical_flow.hpp"
 #include <deque>
 #include "depth_filter.h"
 #include "RGBD.h"
@@ -50,7 +52,7 @@ public:
 const static int MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE = 200000; //THERE'S A LIMIT TO PARTICLES DEPENDING ON THE GPU, I DON'T KNOW WHY -- somwhere aroud 75k is when it starts glitching
 const static float DEATH_LIFETIME_IN_SECONDS = 3.5; //total time until dying particle instances expire
 const static int SECONDS_BETWEEN_NEW_SPAWNS = 0.5;
-const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 8; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
+const static int DEPTH_SUBSAMPLE_WINDOW_SIZE = 4; //X by X window size to subsample the depth buffer for spawning instanced meshes. 1 = full depth buffer, 2 = 2x2 so half the number of instances.
 const static int VARIABLE_CAP = 50; //max diff between front and back pixels per window to qualify as valid depth subsample.
 const static int DESIRED_EDGE_NUM_CAP = 150; //desired cap (i.e., number to decimate down to) to the number of edges we keep for kd-tree indexing.
 
@@ -100,7 +102,7 @@ public:
 
 	bool AddDyingParticleBatch(std::vector<ParticleInstance> particles, float currentTime)
 	{
-		if (CurrentTotalParticles + particles.size() > MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)
+		if (particles.size() > 0 && CurrentTotalParticles + particles.size() > MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)
 		{ //no space... time to clear out enough space for the batch
 			if (appendSetting == ParticleManagerAppendSetting::DeleteOldestToAdd)
 			{ //clear enough space at the end to add this full particle batch
@@ -174,26 +176,33 @@ public:
 	void mouseDown(MouseEvent event) override;
 	void mouseDrag(MouseEvent event) override;
 
-	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed);
+	void SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, vec4 *colors, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, vec4 *triangleColors, float elapsed);
 	std::vector<uint16_t> GetSuperPixelAverageDepths(uint16_t* depthMap, int width, int height, int subsampleWindowSize);
 
 	void SetupBackParticlesDraw(std::vector<float> backParticlePositions, std::vector<float> backParticleScales, vec3 *backPositionsVBO, float *backScalesVBO, int particleArrayWidth, int particleArrayHeight);
 
 	std::vector<vec4> GetRGBSubsampledColors(std::vector<uint16_t> subsampledDepths, int subsampledWidth, int subsampledHeight);
+	void SetupTriangles(std::vector<uint16_t> &subsampledDepths, std::vector<vec4> &subsampledColors, int subsampleWidth, int subsampledHeight, vec3* &trianglePositions, vec4* &triangleColors, uint16_t* &triangleIndices);
+	void GLDrawTriangles();
+
+	void UpdateOpticalFlow(std::vector<uint16_t> &depthFrame, int depthWidth, int depthHeight);
 
 	CameraPersp			mCam;
 	gl::BatchRef		mBatch;
 	gl::BatchRef		mBatchDyingCubes;
 	gl::BatchRef		mBatchBackubes;
+	gl::BatchRef		mBatchTriangles;
 
 	gl::TextureRef		mTexture;
 
 	gl::GlslProgRef		mGlsl;
 	gl::GlslProgRef		mGlslDyingCubes;
 	gl::GlslProgRef		mGlslBackCubes;
+	gl::GlslProgRef		mGlslTriangles;
 
 	gl::VboRef			mInstancePositionVbo;
 	gl::VboRef			mInstanceScaleVbo;
+	gl::VboRef			mVertColorsVbo;
 
 	gl::VboRef			mInstanceDyingDataVbo;
 	gl::VboRef			mInstanceDyingScaleVbo;
@@ -201,6 +210,11 @@ public:
 
 	gl::VboRef			mInstanceBackPositionVbo;
 	gl::VboRef			mInstanceFillerScaleVbo;
+
+	gl::VboRef			mTrianglePositionsVbo;
+	gl::VboRef			mTriangleIndicesVbo;
+	gl::VboRef			mTriangleColorsVbo;
+	gl::VboMeshRef		mTrianglesVboMesh;
 
 	gl::TextureRef		mLogoTexture;
 
@@ -233,9 +247,19 @@ public:
 	bool DrawBackParticles = true;
 	bool DrawDyingParticles = true;
 	bool DrawFrontParticles = true;
-	bool DrawTriangles = false;
+	bool DrawTriangles = true;
+	bool DrawBatchTriangles = false;
 	bool MaskFrontParticles = false;
-	bool ModuloTriangleDirections = true;
+	bool ModuloTriangleDirections = false;
+
+	Mat previousDepthImage;
+	Mat currentFlow;
+	bool firstFrame = true;
+
+	std::vector<vec4> subsampledColors;
+	vector<vec3> rgbPoints;
+	
+	bool PauseRGBCapture = false;
 };
 
 
@@ -275,6 +299,7 @@ void HP_WaitingRTApp::setup()
 	mGlsl = gl::GlslProg::create(loadAsset("shader.vert"), loadAsset("shader.frag"));
 	mGlslDyingCubes = gl::GlslProg::create(loadAsset("shaderDying.vert"), loadAsset("shaderDying.frag"));
 	mGlslBackCubes = gl::GlslProg::create(loadAsset("shaderBack.vert"), loadAsset("shaderBack.frag"));
+	mGlslTriangles = gl::GlslProg::create(loadAsset("shaderTriangles.vert"), loadAsset("shaderTriangles.frag"));
 #else
 	mGlsl = gl::GlslProg::create(loadAsset("shader_es2.vert"), loadAsset("shader_es2.frag"));
 #endif
@@ -291,9 +316,12 @@ void HP_WaitingRTApp::setup()
 	std::vector<vec3> deathPositions = std::vector<vec3>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
 	std::vector<float> deathTotalLifetimes = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
 	std::vector<float> dyingScales = std::vector<float>(MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE);
+	std::vector<vec4> vertColors;
+
 	std::vector<vec3> trianglePositions;
 	std::vector<vec4> triangleVertColors;
 	std::vector<uint16_t> triangleIndices;
+
 	for (size_t potX = 0; potX < width; ++potX) {
 		for (size_t potY = 0; potY < height; ++potY) {
 			float instanceX = potX / (float)width - 0.5f;
@@ -301,12 +329,14 @@ void HP_WaitingRTApp::setup()
 			vec3 pos = vec3(instanceX * vec3(1, 0, 0) + instanceY * vec3(0, 0, 1));
 			positions.push_back(pos);
 			backPositions.push_back(pos);
+			vertColors.push_back(vec4(1, 1, 1, 1));
 
 			trianglePositions.push_back(pos);
 			trianglePositions.push_back(pos);
 			triangleIndices.resize(triangleIndices.size() + 6, 0); //+6 because 3 indices per triangle, 2 triangles per pixel.
-			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for upper left triangle
-			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //the RGB color for bottom right triangle
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //vert 1
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //vert 2
+			triangleVertColors.push_back(vec4(1, 1, 1, 1)); //vert 3
 
 			cubeScales.push_back(randFloat(0.2, 5));
 			fillerScales.push_back(randFloat(0.2, 5));
@@ -334,6 +364,9 @@ void HP_WaitingRTApp::setup()
 	mInstanceDyingTotalLifetimesVbo = gl::Vbo::create(GL_ARRAY_BUFFER, (MAX_NUMBER_DYING_PARTICLE_BUFFER_SIZE)* sizeof(float), deathTotalLifetimes.data(), GL_DYNAMIC_DRAW);
 	mInstanceBackPositionVbo = gl::Vbo::create(GL_ARRAY_BUFFER, backPositions.size() * sizeof(vec3), backPositions.data(), GL_DYNAMIC_DRAW);
 	mInstanceFillerScaleVbo = gl::Vbo::create(GL_ARRAY_BUFFER, fillerScales.size() * sizeof(float), fillerScales.data(), GL_DYNAMIC_DRAW);
+	mVertColorsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, vertColors.size() * sizeof(vec4), vertColors.data(), GL_DYNAMIC_DRAW);
+	mTrianglePositionsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, trianglePositions.size() * sizeof(vec3), trianglePositions.data(), GL_DYNAMIC_DRAW);
+	mTriangleColorsVbo = gl::Vbo::create(GL_ARRAY_BUFFER, triangleVertColors.size() * sizeof(vec4), triangleVertColors.data(), GL_DYNAMIC_DRAW);
 
 	// we need a geom::BufferLayout to describe this data as mapping to the CUSTOM_0 semantic, and the 1 (rather than 0) as the last param indicates per-instance (rather than per-vertex)
 	geom::BufferLayout instanceDataLayout;
@@ -342,12 +375,17 @@ void HP_WaitingRTApp::setup()
 	geom::BufferLayout instanceScaleLayout;
 	instanceScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
 
+	geom::BufferLayout instanceColorLayout;
+	instanceColorLayout.append(geom::Attrib::CUSTOM_2, 4, 0, 0, 1 /* per instance */);
+
+
 	// now add it to the VboMesh we already made of the Teapot
 	mesh->appendVbo(instanceDataLayout, mInstancePositionVbo);
 	mesh->appendVbo(instanceScaleLayout, mInstanceScaleVbo);
+	mesh->appendVbo(instanceColorLayout, mVertColorsVbo);
 
 	// and finally, build our batch, mapping our CUSTOM_0 attribute to the "vInstancePosition" GLSL vertex attribute
-	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
+	mBatch = gl::Batch::create(mesh, mGlsl, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" }, { geom::Attrib::CUSTOM_2, "fVertColor" } });
 
 	geom::BufferLayout instanceDyingScaleLayout;
 	instanceDyingScaleLayout.append(geom::Attrib::CUSTOM_1, 1, 0, 0, 1 /* per instance */);
@@ -376,6 +414,25 @@ void HP_WaitingRTApp::setup()
 
 	mBatchBackubes = gl::Batch::create(meshBack, mGlslBackCubes, { { geom::Attrib::CUSTOM_0, "vInstancePosition" }, { geom::Attrib::CUSTOM_1, "fCubeScale" } });
 
+
+	//3 indices for each triangle, 2 triangles per position
+	mTriangleIndicesVbo = gl::Vbo::create(GL_ELEMENT_ARRAY_BUFFER, trianglePositions.size() * 3 * sizeof(uint16_t), triangleIndices.data(), GL_DYNAMIC_DRAW);
+
+	geom::BufferLayout trianglePositionsLayout;
+	trianglePositionsLayout.append(geom::Attrib::POSITION, 3, 0, 0, 0);
+
+	geom::BufferLayout triangleColorsLayout;
+	triangleColorsLayout.append(geom::Attrib::CUSTOM_0, 4, 0, 0, 0);
+	triangleColorsLayout.append(geom::Attrib::CUSTOM_1, 4, 0, 0, 0);
+	triangleColorsLayout.append(geom::Attrib::CUSTOM_2, 4, 0, 0, 0);
+
+	//mTriangleColorsVbo ....? use vbo of color in layout???
+
+	mTrianglesVboMesh = gl::VboMesh::create(
+		(uint32_t)trianglePositions.size(), GL_TRIANGLES, { { trianglePositionsLayout, mTrianglePositionsVbo }, { triangleColorsLayout, mTriangleColorsVbo } }, (uint32_t)trianglePositions.size() * 3, GL_UNSIGNED_SHORT, mTriangleIndicesVbo);
+	mBatchTriangles = gl::Batch::create(mTrianglesVboMesh, mGlslTriangles, { { geom::Attrib::CUSTOM_0, "vColor0" }, { geom::Attrib::CUSTOM_1, "vColor1" }, { geom::Attrib::CUSTOM_2, "vColor2" } });
+
+	
 	gl::enableDepthWrite();
 	gl::enableDepthRead();
 	gl::enableAlphaBlending();
@@ -415,31 +472,44 @@ void HP_WaitingRTApp::update()
 	mDSAPI->update();
 
 	mDepthBuffer = mDSAPI->getDepthFrame();
-	mRgbBuffer = mDSAPI->getRgbFrame();
+	if (!PauseRGBCapture)
+		mRgbBuffer = mDSAPI->getRgbFrame();
 
 	// update our instance positions; map our instance data VBO, write new positions, unmap
 	vec3 *positions = (vec3*)mInstancePositionVbo->mapWriteOnly(true);
 	vec3 *backPositions = (vec3*)mInstanceBackPositionVbo->mapWriteOnly(true);
 	float *scales = (float*)mInstanceScaleVbo->mapWriteOnly(true);
+	vec4 *colors = (vec4*)mVertColorsVbo->mapWriteOnly(true);
 	float *dyingScales = (float*)mInstanceDyingScaleVbo->mapWriteOnly(true);
 	float *fillerScales = (float*)mInstanceFillerScaleVbo->mapWriteOnly(true);
 	vec3 *deathPositions = (vec3*)mInstanceDyingDataVbo->mapWriteOnly(true);
 	float *totalLivingTimes = (float*)mInstanceDyingTotalLifetimesVbo->mapWriteOnly(true);
 
-	SetupParticles(positions, backPositions, scales, dyingScales, fillerScales, deathPositions, totalLivingTimes, elapsed);
+	vec3 *trianglePositions = (vec3*)mTrianglePositionsVbo->mapWriteOnly(true);
+	uint16_t *trangleIndices = (uint16_t*)mTriangleIndicesVbo->mapWriteOnly(true);
+	vec4 *triangleColors = (vec4*)mTriangleColorsVbo->mapWriteOnly(true);
+
+	SetupParticles(positions, backPositions, scales, colors, dyingScales, fillerScales, deathPositions, totalLivingTimes, trianglePositions, trangleIndices, triangleColors, elapsed);
 
 
 	mInstancePositionVbo->unmap();
 	mInstanceScaleVbo->unmap();
+	mVertColorsVbo->unmap();
 	mInstanceDyingDataVbo->unmap();
 	mInstanceDyingTotalLifetimesVbo->unmap();
 	mInstanceBackPositionVbo->unmap();
 	mInstanceDyingScaleVbo->unmap();
 	mInstanceFillerScaleVbo->unmap();
+
+	mTrianglePositionsVbo->unmap();
+	mTriangleIndicesVbo->unmap();
+	mTriangleColorsVbo->unmap();
 }
 
+
+
 //Given mapped buffers, set up all the particles for drawing.
-void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, float elapsed)
+void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float *scales, vec4 *colors, float *dyingScales, float *fillerScales, vec3 *deathPositions, float *totalLivingTimes, vec3 *trianglePositions, uint16_t *triangleIndices, vec4 *triangleColors, float elapsed)
 {
 	numberToDraw = 0;
 	backNumberToDraw = 0;
@@ -454,10 +524,14 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	int subsampledWidth = width / mDepthSubsampleSize;
 	int subsampledHeight = height / mDepthSubsampleSize;
 
-	//std::vector<vec4> subsampledColors = GetRGBSubsampledColors(subsampledDepths, subsampledWidth, subsampledHeight);
+	subsampledColors = GetRGBSubsampledColors(subsampledDepths, subsampledWidth, subsampledHeight);
 
 	uint32_t currentTotalDepth = 0;
+	
+	UpdateOpticalFlow(subsampledDepths, subsampledWidth, subsampledHeight);
 
+	SetupTriangles(subsampledDepths, subsampledColors, subsampledWidth, subsampledHeight, trianglePositions, triangleColors, triangleIndices);
+	
 	for (int y = 0; y < subsampledHeight; y++)
 	{
 		for (int x = 0; x < subsampledWidth; x++)
@@ -466,8 +540,6 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 			if (subsampledAverageDepth != 0 && subsampledAverageDepth < mCam.getFarClip())
 			{
-				currentTotalDepth += subsampledAverageDepth;
-
 				vec3 subsampledDepthPoint = vec3(
 					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
 					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
@@ -478,10 +550,24 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 				*positions++ = worldPos;
 				*scales++ = 0.5f;//0.3f;
 
+				if (currentFlow.data)
+				{
+					Point2f point = currentFlow.at<cv::Point2f>(y, x);
+
+					//c = lmap<float>(point.x * point.x + point.y * point.y, 0, 255, 0, 1);
+					*colors++ = vec4(sqrt(point.x * point.x + point.y * point.y), 1, 1, 1);
+				}
+				else
+				{
+					*colors++ = vec4(0, 0, 1, 1);
+				}
+
 				numberToDraw++;
 
-				dyingParticlesToAdd.push_back(ParticleInstance(worldPos, vec2(x, y), elapsed)); //add to list of particles to add, manager will take care of making sure they fit.
+				//dyingParticlesToAdd.push_back(ParticleInstance(worldPos, vec2(x, y), elapsed)); //add to list of particles to add, manager will take care of making sure they fit.
 			}
+
+
 		}
 	}
 	
@@ -492,12 +578,13 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 	mDyingParticleManager.SetupBatchDraw(mCurrentlyHasDyingInstance, deathPositions, totalLivingTimes, dyingScales, elapsed, 1.0f, subsampledWidth, subsampledHeight);
 
 	ForwardForceMultiplier = (currentTotalDepth / (subsampledWidth * subsampledHeight)) - (previousTotalDepth / (subsampledWidth * subsampledHeight));
-	previousTotalDepth = currentTotalDepth;
 }
 
 void HP_WaitingRTApp::draw()
 {
 	gl::clear(Color::black());
+
+	GLDrawTriangles();
 
 	gl::setMatrices(mMayaCam.getCamera());
 
@@ -551,6 +638,29 @@ void HP_WaitingRTApp::draw()
 
 		mBatch->drawInstanced(numberToDraw);
 	}
+
+	/* FLOW LINES */
+	if (currentFlow.data)
+	{
+		gl::begin(GL_LINES);
+		gl::color(0, 1, 0, 0.5);
+		for (int y = 0; y < currentFlow.rows; y++)
+		{
+			for (int x = 0; x < currentFlow.cols; x++)
+			{
+				Point2f p = currentFlow.at<Point2f>(y, x);
+				vec3 mappedPoint = vec3(
+					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					500);
+				vec3 worldPos = mDSAPI->getZCameraSpacePoint(mappedPoint);
+				gl::vertex(worldPos);
+				gl::vertex(worldPos.x + (p.x * 3), worldPos.y + (p.y * 3), worldPos.z);
+			}
+		}
+		gl::end();
+	}
+
 }
 
 void HP_WaitingRTApp::keyDown(KeyEvent event)
@@ -582,6 +692,8 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 			mPreviouslyHadDepth.clear();
 			mPreviouslyHadDepth = std::vector<bool>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
 			std::fill(mPreviouslyHadDepth.begin(), mPreviouslyHadDepth.end(), false);
+			rgbPoints.clear();
+			//rgbPoints = std::vector<vec3>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
 	}
 	else if (event.getChar() == '2'){
@@ -593,7 +705,13 @@ void HP_WaitingRTApp::keyDown(KeyEvent event)
 			mPreviouslyHadDepth.clear();
 			mPreviouslyHadDepth = std::vector<bool>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
 			std::fill(mPreviouslyHadDepth.begin(), mPreviouslyHadDepth.end(), false);
+			rgbPoints.clear();
+			//rgbPoints = std::vector<vec3>(width / mDepthSubsampleSize * height / mDepthSubsampleSize);
 		} while (width % mDepthSubsampleSize != 0 || height % mDepthSubsampleSize != 0);
+	}
+	else if (event.getChar() == 'z')
+	{
+		PauseRGBCapture = !PauseRGBCapture;
 	}
 	
 }
@@ -735,11 +853,15 @@ std::vector<vec4> HP_WaitingRTApp::GetRGBSubsampledColors(std::vector<uint16_t> 
 	{
 		for (int x = 0; x < subsampledWidth; x++)
 		{
-			float zImage[] = { static_cast<float>(x * mDepthSubsampleSize), static_cast<float>(y * mDepthSubsampleSize), static_cast<float>(subsampledDepths[x + (y * subsampledWidth)]) }, zCamera[3], thirdCamera[3], thirdImage[2];
+			float depth = static_cast<float>(subsampledDepths[x + (y * subsampledWidth)]);
+			//if (depth == 0)
+			//	depth = 1000;
+			float zImage[] = { static_cast<float>(x * mDepthSubsampleSize), static_cast<float>(y * mDepthSubsampleSize), depth }, zCamera[3], thirdCamera[3], thirdImage[2];
 			DSTransformFromZImageToZCamera(zIntrin, zImage, zCamera);
 			DSTransformFromZCameraToRectThirdCamera(zToThirdTrans, zCamera, thirdCamera);
 			DSTransformFromThirdCameraToRectThirdImage(thirdIntrin, thirdCamera, thirdImage);
 
+			//DSTransformFromZImageToRectThirdImage(zIntrin, zToThirdTrans, thirdIntrin, zImage, thirdImage);	//DOES THIS WORK FOR FULL RGB?
 			if (zImage[2] != 0) //depth is valid
 			{
 				uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
@@ -757,6 +879,417 @@ std::vector<vec4> HP_WaitingRTApp::GetRGBSubsampledColors(std::vector<uint16_t> 
 	return subsampledColors;
 }
 
+void HP_WaitingRTApp::UpdateOpticalFlow(std::vector<uint16_t> &depthFrame, int depthWidth, int depthHeight)
+{
+	//for (int i = 0; i < depthWidth * depthHeight; i++)
+	//{
+	//	if (depthFrame[i] > mCam.getFarClip())
+	//	{
+	//		depthFrame[i] = 0;
+	//	}
+	//}
+	Mat depth = Mat(Size(depthWidth, depthHeight), CV_16U, depthFrame.data());
+	Mat depthf(Size(depthWidth, depthHeight), CV_8UC1);
+	depth.convertTo(depthf, CV_8UC1, 255.0 / 4096.0);
+	currentFlow.create(Size(depthWidth, depthHeight), CV_32FC2);
+	
+	if (previousDepthImage.data && previousDepthImage.rows == depthf.rows && previousDepthImage.cols == depthf.cols)
+	{
+		calcOpticalFlowFarneback(previousDepthImage, depthf, currentFlow, 0.5, 3, 15, 3, 5, 1.2, 0);
+	}
+
+	depthf.copyTo(previousDepthImage);
+}
+
+//first is the depth value, second is the index (only set if depth value is valid)
+template <typename T>
+std::vector<pair<bool, uint16_t>> getSquareFromTopLeft(std::vector<T> depthData, int x, int y, int w, int h, float farClipZ)
+{
+	std::vector<pair<bool, uint16_t>> window = { { false, 0 }, { false, 0 }, { false, 0 }, { false, 0 } };
+
+	window[0].first = depthData[x + (y * w)] != 0 && depthData[x + (y * w)] < farClipZ; //set to the top left pixel
+	window[0].second = x + (y * w);
+
+	if (x == w - 1 && y == h - 1) //bottom right
+	{
+		window[1].first = false;
+		window[2].first = false;
+		window[3].first = false;
+	}
+	else if (x == w - 1 || y == h - 1) //bottom right)
+	{
+		if (x == w - 1) //right
+		{
+			window[1].first = false;
+			window[2].first = depthData[x + ((y + 1) * w)] != 0 && depthData[x + ((y + 1) * w)] < farClipZ;
+			window[2].second = x + ((y + 1) * w);
+			window[3].first = false;
+		}
+
+		if (y == h - 1) //bottom
+		{
+			window[1].first = depthData[(x + 1) + (y * w)] != 0 && depthData[(x + 1) + (y * w)] < farClipZ;
+			window[1].second = (x + 1) + (y * w);
+			window[2].first = false;
+			window[3].first = false;
+		}
+	}
+	else
+	{
+		window[1].first = depthData[(x + 1) + (y * w)] != 0 && depthData[(x + 1) + (y * w)] < farClipZ;
+		window[1].second = (x + 1) + (y * w);
+		window[2].first = depthData[x + ((y + 1) * w)] != 0 && depthData[x + ((y + 1) * w)] < farClipZ;
+		window[2].second = x + ((y + 1) * w);
+		window[3].first = depthData[(x + 1) + ((y + 1) * w)] != 0 && depthData[(x + 1) + ((y + 1) * w)] < farClipZ;
+		window[3].second = (x + 1) + ((y + 1) * w);
+	}
+
+
+	return window;
+}
+
+void HP_WaitingRTApp::SetupTriangles(std::vector<uint16_t> &subsampledDepths, std::vector<vec4> &subsampledColors, int subsampledWidth, int subsampledHeight, vec3* &trianglePositions, vec4* &triangleColors, uint16_t* &triangleIndices)
+{
+	if (DrawTriangles == false)
+	{
+		return;
+	}
+
+	if (rgbPoints.empty())
+	{ //repopulate
+		rgbPoints = vector<vec3>(subsampledWidth * subsampledHeight);
+
+		for (int y = 0; y < subsampledHeight; y++)
+		{
+			for (int x = 0; x < subsampledWidth; x++)
+			{
+				vec3 trianglePoint = vec3(
+					((float)x * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					((float)y * (float)mDepthSubsampleSize) + ((float)mDepthSubsampleSize / (float)2),
+					1000);																						//CUSTOM DEPTH SPOT
+				vec3 p = mDSAPI->getZCameraSpacePoint(trianglePoint);
+
+				rgbPoints[x + (y * subsampledWidth)] = p;
+			}
+		}
+	}
+	else if (currentFlow.data)
+	{ //update points with vector field
+		for (int y = 0; y < subsampledHeight; y++)
+		{
+			for (int x = 0; x < subsampledWidth; x++)
+			{
+				Point2f p = currentFlow.at<Point2f>(y, x);
+
+				rgbPoints[x + (y * subsampledWidth)].x += p.x * 4;
+				rgbPoints[x + (y * subsampledWidth)].x += p.y * 4;
+
+			}
+		}
+	}
+	
+}
+
+void HP_WaitingRTApp::GLDrawTriangles()
+{
+	if (DrawTriangles)
+	{
+		if (DrawBatchTriangles)
+		{
+			mGlslTriangles->bind();
+			mGlslTriangles->uniform("rotationMatrix", glm::mat4());
+
+			//mBatchTriangles->drawInstanced(numberTrianglesToDraw);
+			mBatchTriangles->draw();
+		}
+		else
+		{
+			int subsampledWidth = width / mDepthSubsampleSize;
+			int subsampledHeight = height / mDepthSubsampleSize;
+			gl::begin(GL_TRIANGLES);
+			for (int y = 0; y < height / mDepthSubsampleSize; y++)
+			{
+				for (int x = 0; x < width / mDepthSubsampleSize; x++)
+				{
+					/*vec4 c1 = triangleColors[triangleIndices[(i * 3) + 0]];
+					vec4 c2 = triangleColors[triangleIndices[(i * 3) + 1]];
+					vec4 c3 = triangleColors[triangleIndices[(i * 3) + 2]];
+
+					vec4 cAvg = vec4(c1 + c2 + c3);
+					cAvg /= 3;
+
+					gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+					gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+					gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);*/
+
+					gl::color(1, 1, 1, 1);
+					if (x < subsampledWidth - 1 && y < subsampledHeight - 1)
+					{
+						vec4 c1 = subsampledColors[x + y * subsampledWidth];
+						vec4 c2 = subsampledColors[x + (y + 1) * subsampledWidth];
+						vec4 c3 = subsampledColors[(x + 1) + y * subsampledWidth];
+
+						vec4 cAvg = vec4(c1 + c2 + c3);
+						cAvg /= 3;
+						gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+
+						gl::color(c1.r, c1.g, c1.b, 1.0);
+						gl::vertex(rgbPoints[x + y * subsampledWidth]);
+						gl::color(c2.r, c2.g, c2.b, 1.0);
+						gl::vertex(rgbPoints[x + (y + 1) * subsampledWidth]);
+						gl::color(c3.r, c3.g, c3.b, 1.0);
+						gl::vertex(rgbPoints[(x + 1) + y * subsampledWidth]);
+
+						//--------------
+
+						c1 = subsampledColors[(x + 1) + (y + 1) * subsampledWidth];
+						c2 = subsampledColors[(x + 1) + (y + 0) * subsampledWidth];
+						c3 = subsampledColors[(x + 0) + (y + 1) * subsampledWidth];
+
+						cAvg = vec4(c1 + c2 + c3);
+						cAvg /= 3;
+						gl::color(cAvg.r, cAvg.g, cAvg.b, cAvg.a);
+
+						gl::color(c1.r, c1.g, c1.b, 1.0);
+						gl::vertex(rgbPoints[(x + 1) + (y + 1) * subsampledWidth]);
+						gl::color(c2.r, c2.g, c2.b, 1.0);
+						gl::vertex(rgbPoints[(x + 1) + (y + 0) * subsampledWidth]);
+						gl::color(c3.r, c3.g, c3.b, 1.0);
+						gl::vertex(rgbPoints[(x + 0) + (y + 1) * subsampledWidth]);
+					}
+				}
+			}
+			
+			gl::end();
+
+		}
+	}
+}
+
+/// <summary>
+/// Pulling a window of pixels out of an image. All arrays involved are 1-dimensional.
+/// </summary>
+/// <param name="pixels">pixel array, each byte should have a grayscale pixel color, so the size of the array should be (width * height)</param>
+/// <param name="x">middle x position of window</param>
+/// <param name="y">middle y position of window</param>
+/// <param name="width">width of the image</param>
+/// <param name="height">height of the image</param>
+/// <param name="window_size">dimensions of the window</param>
+/// <returns></returns>
+template <typename T>
+std::vector<T> getWindowFromMiddle(std::vector<T> &PreviouslyComputedWindow, std::vector<T> depthData, int x, int y, int w, int h, int window_size = 3)
+{
+	//window size is only 3x3 for now, this is a 9-byte array of depthData
+	//0, 1, 2
+	//3, 4, 5
+	//6, 7, 8
+	std::vector<T> window(window_size * window_size);
+
+	//Corner Cases
+	if (x == 0 && y == 0) //top left is middle
+	{
+		window[0] = depthData[x + 1 + ((y + 1) * w)]; //mirror top left with bottom right
+		window[1] = depthData[x + ((y + 1) * w)]; //mirror top middle with bottom middle
+		window[2] = depthData[x + 1 + ((y + 1) * w)]; //mirror top right with bottom right
+
+		window[3] = depthData[x + 1 + (y * w)]; //mirror middle-left with middle-right
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y + 1) * w)]; //mirror bottom-left with bottom-right
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (x == w - 1 && y == 0) //top right is middle
+	{
+		window[0] = depthData[x - 1 + ((y + 1) * w)]; //0 <- 6
+		window[1] = depthData[x + ((y + 1) * w)]; //1 <- 7
+		window[2] = depthData[x - 1 + ((y + 1) * w)]; //2 <- 6
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x - 1 + ((y + 1) * w)]; //8 <- 6
+	}
+	else if (x == 0 && y == h - 1) //bottom left is middle
+	{
+		window[0] = depthData[x + 1 + ((y - 1) * w)]; //0 <- 2
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x + 1 + (y * w)]; //3 <- 5
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y - 1) * w)]; //6 <- 2
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x + 1 + ((y - 1) * w)]; //8 <- 2
+	}
+	else if (x == w - 1 && y == h - 1) //bottom right is middle
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x - 1 + ((y - 1) * w)]; //2 <- 0
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y - 1) * w)]; //6 <- 0
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x - 1 + ((y - 1) * w)]; //8 <- 0
+	}
+
+	//0, 1, 2
+	//3, 4, 5
+	//6, 7, 8
+
+	//Side Cases
+	else if (y == 0) // middle is in top row
+	{
+		window[0] = depthData[x - 1 + ((y + 1) * w)]; //0 <- 6
+		window[1] = depthData[x + ((y + 1) * w)]; //1 <- 7
+		window[2] = depthData[x + 1 + ((y + 1) * w)]; //2 <- 8
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (x == 0) // middle is in left-most column
+	{
+		window[0] = depthData[x + 1 + ((y - 1) * w)]; //0 <- 2
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x + 1 + (y * w)]; //3 <- 5
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x + 1 + ((y + 1) * w)]; //6 <- 8
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x + 1 + ((y + 1) * w)];
+	}
+	else if (y == h - 1) //middle is in bottom row
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x + 1 + (y * w)];
+
+		window[6] = depthData[x - 1 + ((y - 1) * w)]; //6 <- 0
+		window[7] = depthData[x + ((y - 1) * w)]; //7 <- 1
+		window[8] = depthData[x + 1 + ((y - 1) * w)]; //8 <- 2
+	}
+	else if (x == w - 1) //middle is in right-most column
+	{
+		window[0] = depthData[x - 1 + ((y - 1) * w)];
+		window[1] = depthData[x + ((y - 1) * w)];
+		window[2] = depthData[x - 1 + ((y - 1) * w)]; //2 <- 0
+
+		window[3] = depthData[x - 1 + (y * w)];
+		window[4] = depthData[x + (y * w)];
+		window[5] = depthData[x - 1 + (y * w)]; //5 <- 3
+
+		window[6] = depthData[x - 1 + ((y + 1) * w)];
+		window[7] = depthData[x + ((y + 1) * w)];
+		window[8] = depthData[x - 1 + ((y + 1) * w)]; //8 <- 6
+	}
+
+	//Middle Not a Border
+	else
+	{    //old
+		//X, 1, 2 -- move 1, 2 -> 0, 1
+		//X, 4, 5 -- move 4, 5 -> 3, 4
+		//X, 7, 8 -- move 7, 8 -> 6, 7
+		if (PreviouslyComputedWindow.size() == (w * h) && x > 1 && y > 1 && x < w - 2 && y < h - 2)
+		{ //x just incremented by 1, and we're not next to a border, so we should be able to use the previously computed window to avoid re-computation
+
+			//All this saves is a little bit of time calculating indeces as shown in the else statement here... it doesn't save on the computations for calculating pixel values
+			window[0] = PreviouslyComputedWindow[1];
+			window[1] = PreviouslyComputedWindow[2];
+			window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+			window[3] = PreviouslyComputedWindow[4];
+			window[4] = PreviouslyComputedWindow[5];
+			window[5] = depthData[x + 1 + (y * w)];
+
+			window[6] = PreviouslyComputedWindow[7];
+			window[7] = PreviouslyComputedWindow[8];
+			window[8] = depthData[x + 1 + ((y + 1) * w)];
+		}
+		else
+		{ //compute the window from scratch
+			window[0] = depthData[x - 1 + ((y - 1) * w)];
+			window[1] = depthData[x + ((y - 1) * w)];
+			window[2] = depthData[x + 1 + ((y - 1) * w)];
+
+			window[3] = depthData[x - 1 + (y * w)];
+			window[4] = depthData[x + (y * w)];
+			window[5] = depthData[x + 1 + (y * w)];
+
+			window[6] = depthData[x - 1 + ((y + 1) * w)];
+			window[7] = depthData[x + ((y + 1) * w)];
+			window[8] = depthData[x + 1 + ((y + 1) * w)];
+		}
+	}
+
+	PreviouslyComputedWindow = window;
+
+	window = TransposeWindow(window);
+
+	return window;
+}
+
+////imgDepths is the subsampled back Z's and scales
+//void HP_WaitingRTApp::SetFlowWithBlurKernel(int w, int h)
+//{
+//	std::vector<float> blurredImage;
+//	std::vector<float> PreviouslyComputedWindow; //used to speed up window computation
+//
+//
+//	//average out the array data first.
+//	for (int y = 0; y < h; y++)
+//	{
+//		for (int x = 0; x < w; x++)
+//		{
+//
+//			float averageZ = 0;
+//			if (imgDepths[x + (y * w)] != 0)
+//			{
+//				std::vector<float> currentWindow = getWindowFromMiddle<float>(PreviouslyComputedWindow, imgDepths, x, y, w, h, 3); //3x3 window size
+//				int numUsedInWindow = 0;
+//				for (int i = 0; i < currentWindow.size(); i++)
+//				{
+//					if (currentWindow[i] != 0)
+//					{
+//						averageZ += currentWindow[i];
+//						numUsedInWindow++;
+//					}
+//				}
+//
+//				averageZ /= (float)numUsedInWindow;
+//			}
+//			else
+//			{
+//				PreviouslyComputedWindow.clear();
+//			}
+//
+//			blurredImage.push_back(averageZ);
+//		}
+//	}
+//
+//	return blurredImage;
+//}
 
 #if defined( CINDER_MSW ) && ! defined( CINDER_GL_ANGLE )
 auto options = RendererGl::Options().version(3, 3); // instancing functions are technically only in GL 3.3

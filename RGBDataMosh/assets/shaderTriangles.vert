@@ -9,6 +9,10 @@ in vec2		ciTexCoord0;
 in vec3		ciNormal;
 in vec4		ciColor;
 
+in vec4		vColor0;
+in vec4		vColor1;
+in vec4		vColor2;
+
 out vec3 Position; // In world space
 
 out vec2		TexCoord;
@@ -65,7 +69,7 @@ void main( void )
 {
 	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (ciPosition)).xyz, ciPosition.w) );
 	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 100) / (2500 - 100));
-	Color 		= ciColor;
+	Color 		= (vColor0 + vColor1 + vColor2).rgba / 3;
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }

@@ -8,6 +8,8 @@ in vec4		ciPosition;
 in vec2		ciTexCoord0;
 in vec3		ciNormal;
 in vec4		ciColor;
+in vec3		vInstancePosition; // per-instance position variable
+in float	fCubeScale;
 
 out vec3 Position; // In world space
 
@@ -63,9 +65,13 @@ vec3 HSLToRGB(vec3 hsl)
 
 void main( void )
 {
-	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (ciPosition)).xyz, ciPosition.w) );
-	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 100) / (2500 - 100));
-	Color 		= ciColor;
+	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * ciPosition)).xyz, ciPosition.w) + vec4( vInstancePosition, 0 ) );
+	float normalizedMappedZ = 0 + (1 - 0) * ((vInstancePosition.z - 500) / (1000 - 500));
+	vec3 newRGB = HSLToRGB(vec3(1 - normalizedMappedZ, 1.0, 0.5));
+	Color 		=  vec4(
+						newRGB.r, newRGB.g, newRGB.b,
+						0.5
+					   );
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }

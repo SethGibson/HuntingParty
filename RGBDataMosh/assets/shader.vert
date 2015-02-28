@@ -1,16 +1,21 @@
 #version 150
 
-uniform mat4	ciModelViewProjection;
-uniform mat3	ciNormalMatrix;
-uniform mat4	rotationMatrix;
+uniform mat4		ciModelViewProjection;
+uniform mat3		ciNormalMatrix;
+uniform mat4		rotationMatrix;
 
 in vec4		ciPosition;
 in vec2		ciTexCoord0;
 in vec3		ciNormal;
 in vec4		ciColor;
+in vec3		vInstancePosition; // per-instance position variable
+in float	fCubeScale;
+in vec4		fVertColor;
 
 out vec3 Position; // In world space
 
+out vec2		ScreenPos;
+out vec2		InstanceXY;
 out vec2		TexCoord;
 out lowp vec4	Color;
 out vec3		Normal;
@@ -63,9 +68,17 @@ vec3 HSLToRGB(vec3 hsl)
 
 void main( void )
 {
-	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (ciPosition)).xyz, ciPosition.w) );
-	float normalizedMappedZ = 0 + (1 - 0) * ((gl_Position.z - 100) / (2500 - 100));
-	Color 		= ciColor;
+	gl_Position	= ciModelViewProjection * ( vec4((rotationMatrix * (fCubeScale * ciPosition)).xyz, ciPosition.w) + vec4( vInstancePosition, 0 ) );
+
+	ScreenPos = ((gl_Position.xy / gl_Position.w) + 1) / 2;
+
+	float normalizedMappedZ = 0 + (1 - 0) * ((vInstancePosition.z - 100) / (2500 - 100));
+	Color = vec4(fVertColor.x, 1, 0, 0.25);// vec4(HSLToRGB(vec3(fVertColor.x, 1.0, 0.8)), 1.0);
+	//Color 		=  vec4(
+	//					0.6, 0.6, 0.6,//HSLToRGB(vec3(normalizedMappedZ, 1.0, 0.8)),
+	//					1.0
+	//				   );
+	InstanceXY	= vec2(vInstancePosition.x, vInstancePosition.y);
 	TexCoord	= ciTexCoord0;
 	Normal		= ciNormalMatrix * (rotationMatrix * vec4(ciNormal,0)).xyz;
 }
