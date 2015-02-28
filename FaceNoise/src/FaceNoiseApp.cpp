@@ -76,7 +76,7 @@ void FaceNoiseApp::setup()
 	mCamera.lookAt(vec3(0), vec3(0, 0, -1), vec3(0, -1, 0));
 	mCamera.setCenterOfInterestPoint(vec3(0, 0, -3));
 	mMayaCam.setCurrentCam(mCamera);
-
+	mCamera.setFovHorizontal(57.0f);
 	mTexRgb = gl::Texture::create(640, 480);
 
 	gl::enableDepthRead();
@@ -160,6 +160,7 @@ void FaceNoiseApp::update()
 	mTexRgb->update(mCinderDS->getRgbFrame());
 	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
 	mPoints.clear();
+	mMagSpectrum = mMonitorSpectralNode->getMagSpectrum();
 	int id = 0;
 	for (int dy = 0; dy < S_DIMS.y; ++dy)
 	{

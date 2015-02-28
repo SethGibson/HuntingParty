@@ -342,6 +342,7 @@ void WFTE_v2App::setupFBOs()
 
 	gl::Fbo::Format cBlurFormat;
 	cBlurFormat.colorTexture(gl::Texture2d::Format().internalFormat(GL_RGBA16F));
+	cBlurFormat.samples(4);
 	mHBlurTarget = gl::Fbo::create(1280, 720, cBlurFormat);
 	mVBlurTarget = gl::Fbo::create(1280, 720, cBlurFormat);
 
