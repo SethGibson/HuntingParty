@@ -22,7 +22,6 @@
 #include "opencv2\gpu\gpu.hpp"
 #include "opencv2\videostab\optical_flow.hpp"
 #include <deque>
-#include "depth_filter.h"
 #include "RGBD.h"
 #include "nanoflann.hpp"
 #include <random>
