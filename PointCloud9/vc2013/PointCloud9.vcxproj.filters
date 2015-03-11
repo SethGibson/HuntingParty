@@ -30,10 +30,10 @@
     <ClInclude Include="..\include\Resources.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClCompile Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\src\ciTri.cpp">
+    <ClCompile Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\src\ciTri.cpp">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\src\lib\del_impl.cpp">
+    <ClCompile Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\src\lib\del_impl.cpp">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClCompile>
   </ItemGroup>
@@ -41,19 +41,19 @@
     <ClInclude Include="..\include\Resources.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\ciTri.h">
+    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\ciTri.h">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\del_interface.hpp">
+    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\del_interface.hpp">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\dpoint.hpp">
+    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\dpoint.hpp">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\triangle.h">
+    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\triangle.h">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\triangle_impl.hpp">
+    <ClInclude Include="..\..\..\..\libs\cinder_0.8.6_vc2013\blocks\ciTri\include\lib\triangle_impl.hpp">
       <Filter>Source Files\blocks\ciTri</Filter>
     </ClInclude>
   </ItemGroup>

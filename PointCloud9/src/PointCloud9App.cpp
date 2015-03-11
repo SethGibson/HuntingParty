@@ -196,7 +196,7 @@ void PointCloud9App::setupCamera()
 {
 	mCamera.setPerspective(49.04f, getWindowAspectRatio(), 100, 4000);
 	mCamera.lookAt(Vec3f::zero(), Vec3f(0,0,1000), Vec3f(0, -1, 0));
-	mCamera.setCenterOfInterestPoint(Vec3f(0, 0, 1000));
+	mCamera.setCenterOfInterestPoint(Vec3f(0, 0, 750));
 	mMayaCam.setCurrentCam(mCamera);
 }
 
