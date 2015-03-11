@@ -118,6 +118,8 @@ private:
 						mBlurAmt;
 
 	Color				mMaskColor;
+
+	gl::Texture2dRef	mTexBg;
 };
 
 void WFTE_v2App::setup()
@@ -258,6 +260,8 @@ void WFTE_v2App::setupShaders()
 		console() << "Error loading instance shaders: " << endl;
 		console() << e.what() << endl;
 	}
+
+	mTexBg = gl::Texture2d::create(loadImage(loadAsset("forest_01.jpg")));
 }
 
 void WFTE_v2App::setupDS()
@@ -421,7 +425,7 @@ void WFTE_v2App::renderScene()
 	//gl::enableAdditiveBlending();
 	//Color VBO
 	mColorTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mColorTarget->getSize());
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
@@ -429,12 +433,12 @@ void WFTE_v2App::renderScene()
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	mCloudDrawObj->draw();
 	mTexRgb->unbind();
-	mMeshDrawObj->drawInstanced(mMeshPoints.size());
+	//mMeshDrawObj->drawInstanced(mMeshPoints.size());
 	mColorTarget->unbindFramebuffer();
 
 	//Luminance VBO
 	mLumTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mLumTarget->getSize());
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
@@ -445,12 +449,12 @@ void WFTE_v2App::renderScene()
 	mCloudDrawObj->draw();
 	mTexRgb->unbind();
 	gl::disableAlphaBlending();
-	mMeshDrawObj->drawInstanced(mMeshPoints.size());
+	//mMeshDrawObj->drawInstanced(mMeshPoints.size());
 	mLumTarget->unbindFramebuffer();
 
 	//Blur
 	mFilterTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mFilterTarget->getSize());
 	gl::setMatricesWindow(getWindowSize());
 	mLumTarget->bindTexture();
@@ -462,7 +466,7 @@ void WFTE_v2App::renderScene()
 	
 	//Resolve
 	mFinalTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mFinalTarget->getSize());
 	gl::setMatricesWindow(getWindowSize());
 	mLumTarget->bindTexture(0);
@@ -480,7 +484,7 @@ void WFTE_v2App::renderScene()
 	
 	//Blur H Stage
 	mHBlurTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mHBlurTarget->getSize());
 	gl::setMatricesWindow(getWindowSize());
 	mFinalTarget->bindTexture();
@@ -492,7 +496,7 @@ void WFTE_v2App::renderScene()
 	
 	//Blur V Stage
 	mVBlurTarget->bindFramebuffer();
-	gl::clear(Color::black());
+	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mVBlurTarget->getSize());
 	gl::setMatricesWindow(getWindowSize());
 	mHBlurTarget->bindTexture();
@@ -509,16 +513,24 @@ void WFTE_v2App::draw()
 	
 	gl::clear( Color( 0, 0, 0 ) );
 	gl::color(Color::white());
-	
+	gl::disableDepthRead();
+	gl::disableDepthWrite();
+	gl::enableAdditiveBlending();
+
+	gl::setMatricesWindow(getWindowSize());
+	gl::draw(mTexBg, vec2(0));
+	//gl::draw(mColorTarget->getColorTexture(), vec2(0));
+
 	/*
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	gl::pointSize(mDrawSize);
 	mCloudDrawObj->draw();
-	mTexRgb->unbind();
-	gl::enableAlphaBlending(true);*/
-	gl::setMatricesWindow(getWindowSize());
+	mTexRgb->unbind();*/
+
+
+
 	mColorTarget->bindTexture(0);
 	mFinalTarget->bindTexture(1);
 	mVBlurTarget->bindTexture(2);
@@ -534,6 +546,7 @@ void WFTE_v2App::draw()
 	mFinalTarget->unbindTexture();
 	mVBlurTarget->unbindTexture();
 
+	gl::disableAlphaBlending();
 	mGUI->draw();
 }
 
