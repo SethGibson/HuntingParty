@@ -13,14 +13,12 @@
 #include "cinder/ObjLoader.h"
 #include "cinder/ImageIo.h"
 #include "cinder/Utilities.h"
-
 #include "CiDSAPI.h"
 #include "cinder/MayaCamUI.h"
 #include "cinder/Rand.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include "CinderOpenCV.h"
 #include <deque>
-#include "depth_filter.h"
 #include "RGBD.h"
 #include "nanoflann.hpp"
 #include <random>
@@ -241,10 +239,6 @@ public:
 	std::vector<vec3> mPreviousValidDepthCoord;
 
 	DyingParticlesManager mDyingParticleManager;
-	//std::ofstream out;
-
-	depthf_Handle mDepthFilter;
-	//uint16_t* zAligned;
 
 	int lowThreshold = 4;	// low = 4; high = 6 gives proper outlines
 	int highThreshold = 6;	// low = 4; high = 5 gives a sweet interior outliney effect, and fixes the back-estimation

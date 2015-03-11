@@ -30,7 +30,7 @@
     <ClInclude Include="..\include\Resources.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClCompile Include="..\..\Cinder-DSAPI\src\CiDSAPI.cpp">
+    <ClCompile Include="..\..\..\..\libs\CinderBlocks\blocks\Cinder-DSAPI\src\CiDSAPI.cpp">
       <Filter>Source Files\blocks\Cinder-DSAPI</Filter>
     </ClCompile>
   </ItemGroup>
@@ -38,11 +38,11 @@
     <ClInclude Include="..\include\Resources.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\Cinder-DSAPI\src\CiDSAPI.h">
-      <Filter>Source Files\blocks\Cinder-DSAPI</Filter>
-    </ClInclude>
     <ClInclude Include="..\src\RGBD.h">
       <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\..\..\libs\CinderBlocks\blocks\Cinder-DSAPI\src\CiDSAPI.h">
+      <Filter>Source Files\blocks\Cinder-DSAPI</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
