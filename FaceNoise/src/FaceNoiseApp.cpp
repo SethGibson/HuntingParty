@@ -190,10 +190,10 @@ void FaceNoiseApp::update()
 
 void FaceNoiseApp::draw()
 {
-	gl::clear( Color( 0, 0, 0 ) ); 
+	gl::clear( Color( 0.1f, 0.15f, 0.25f ) ); 
 	gl::setMatrices(mMayaCam.getCamera());
-	gl::enableAdditiveBlending();
-	gl::pointSize(2.0f);
+	//gl::enableAdditiveBlending();
+	gl::pointSize(3.0f);
 	gl::ScopedTextureBind cRgb(mTexRgb);
 	mDrawObj->draw();
 }
