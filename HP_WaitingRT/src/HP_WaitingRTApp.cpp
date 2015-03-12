@@ -4,7 +4,7 @@
 #pragma comment(lib, "DSAPI32.lib")
 #endif
 
-#include "cinder/app/AppNative.h"
+#include "cinder/app/App.h"
 #include "cinder/app/RendererGl.h"
 #include "cinder/gl/Shader.h"
 #include "cinder/gl/Texture.h"
@@ -173,10 +173,10 @@ struct EdgeCloud
 
 typedef nanoflann::KDTreeSingleIndexAdaptor<nanoflann::L2_Simple_Adaptor<int, EdgeCloud<int>>, EdgeCloud<int>, 2> my_kd_tree_t;
 
-class HP_WaitingRTApp : public AppNative {
+class HP_WaitingRTApp : public App {
 public:
 	void setup();
-	void shutdown() override;
+	void cleanup() override;
 	void resize();
 	void update();
 	void draw();
@@ -266,6 +266,7 @@ public:
 
 void HP_WaitingRTApp::setup()
 {
+	getWindow()->setSize(1280, 720);
 	mDepthSubsampleSize = DEPTH_SUBSAMPLE_WINDOW_SIZE;
 
 	//out = std::ofstream("output.txt");
@@ -274,7 +275,7 @@ void HP_WaitingRTApp::setup()
 	mDSAPI = CinderDSAPI::create();
 	mDSAPI->init();
 	mDSAPI->initDepth(CinderDS::FrameSize::DEPTHSD, 60);
-	mDSAPI->initRgb(CinderDS::FrameSize::RGBVGA, 30);
+	mDSAPI->initRgb(CinderDS::FrameSize::RGBVGA, 60);
 	//mDSAPI->initForAlignment();
 	mDSAPI->start();
 
@@ -300,7 +301,7 @@ void HP_WaitingRTApp::setup()
 
 	mCam.setPerspective(cFOVs.y, getWindowAspectRatio(), 100, 2500);
 	mCam.lookAt(vec3(0, 0, 0), vec3(0, 0, 1000), vec3(0, -1, 0));
-
+	mCam.setCenterOfInterestPoint(vec3(0, 0, 750));
 	mMayaCam = MayaCamUI(mCam);
 
 	mTexture = gl::Texture::create(loadImage(loadAsset("blank_texture.png")), gl::Texture::Format().mipmap());
@@ -315,8 +316,8 @@ void HP_WaitingRTApp::setup()
 #endif
 
 	gl::VboMeshRef mesh = gl::VboMesh::create(geom::Sphere().subdivisions(4));
-	gl::VboMeshRef meshDying = gl::VboMesh::create(geom::Cone().subdivisionsAxis(4));
-	gl::VboMeshRef meshBack = gl::VboMesh::create(geom::Cube());
+	gl::VboMeshRef meshDying = gl::VboMesh::create(geom::Cone().subdivisionsAxis(4).apex(1).base(5).height(4));
+	gl::VboMeshRef meshBack = gl::VboMesh::create(geom::Cube().size(vec3(2)));
 
 	// create an array of initial per-instance positions laid out in a 2D grid
 	std::vector<vec3> positions;
@@ -442,7 +443,7 @@ void HP_WaitingRTApp::setup()
 	previousElapsedTime = getElapsedSeconds();
 }
 
-void HP_WaitingRTApp::shutdown()
+void HP_WaitingRTApp::cleanup()
 {
 	mDSAPI->stop();
 	//out.close();
@@ -743,8 +744,8 @@ void HP_WaitingRTApp::SetupParticles(vec3 *positions, vec3 *backPositions, float
 
 void HP_WaitingRTApp::draw()
 {
-	gl::clear(Color::black());
-
+	gl::clear(Color(0.05f, 0.1f, 0.15f));
+	gl::enableAdditiveBlending();
 	GLDrawTriangles();
 
 	gl::setMatrices(mMayaCam.getCamera());
@@ -1572,4 +1573,4 @@ auto options = RendererGl::Options().version(3, 3); // instancing functions are 
 #else
 auto options = RendererGl::Options(); // implemented as extensions in Mac OS 10.7+
 #endif
-CINDER_APP_NATIVE(HP_WaitingRTApp, RendererGl(options))
+CINDER_APP(HP_WaitingRTApp, RendererGl(options))

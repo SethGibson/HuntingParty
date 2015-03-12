@@ -4,7 +4,10 @@
 #pragma comment(lib, "DSAPI.lib")
 #endif
 
-#include "cinder/app/AppNative.h"
+#include <iostream>
+#include <algorithm>
+#include <array>
+#include "cinder/app/App.h"
 #include "cinder/app/RendererGl.h"
 #include "cinder/audio/Context.h"
 #include "cinder/audio/MonitorNode.h"
@@ -15,6 +18,7 @@
 #include "cinder/gl/Texture.h"
 #include "cinder/Camera.h"
 #include "cinder/MayaCamUI.h"
+#include "cinder/params/Params.h"
 #include "CiDSAPI.h"
 
 using namespace ci;
@@ -24,7 +28,7 @@ using namespace CinderDS;
 
 static ivec2 S_DIMS(320, 240);
 
-class FaceNoiseApp : public AppNative
+class FaceNoiseApp : public App
 {
 public:
 	void setup() override;
@@ -44,6 +48,7 @@ private:
 	void setupDS();
 	void setupMesh();
 	void setupAudio();
+	void normalizeAudioValues();
 
 	gl::VboRef mDataObj;
 	geom::BufferLayout mAttribObj;
@@ -61,6 +66,10 @@ private:
 	audio::InputDeviceNodeRef		mInputDeviceNode;
 	audio::MonitorSpectralNodeRef	mMonitorSpectralNode;
 	vector<float>					mMagSpectrum;
+	vector<float>					mMagNormalized;
+	
+	float							mAudioScaleTop, mAudioScaleBottom, mLowThresh, mHighThresh;
+	params::InterfaceGlRef			mGUI;
 };
 
 void FaceNoiseApp::setup()
@@ -82,6 +91,17 @@ void FaceNoiseApp::setup()
 	gl::enableDepthRead();
 	gl::enableDepthWrite();
 	gl::enableAdditiveBlending();
+
+	mAudioScaleTop = 5.0f;
+	mAudioScaleBottom = 1.0f;
+	mLowThresh = 0.25f;
+	mHighThresh = 0.75f;
+
+	mGUI = params::InterfaceGl::create("Audio Params", vec2(300));
+	mGUI->addParam("Audio Scale Top", &mAudioScaleTop);
+	mGUI->addParam("Audio Scale Btm", &mAudioScaleBottom);
+	mGUI->addParam("Low Thresh (0-1)", &mLowThresh);
+	mGUI->addParam("High Thresh (0-1)", &mHighThresh);
 }
 
 void FaceNoiseApp::setupDS()
@@ -92,7 +112,7 @@ void FaceNoiseApp::setupDS()
 	mCinderDS->initRgb(FrameSize::RGBVGA, 60);
 	mCinderDS->start();
 
-	getSignalShutdown().connect(std::bind(&FaceNoiseApp::exit, this));
+	getSignalCleanup().connect(std::bind(&FaceNoiseApp::exit, this));
 }
 
 void FaceNoiseApp::setupMesh()
@@ -154,13 +174,37 @@ void FaceNoiseApp::mouseDrag(MouseEvent event)
 	mMayaCam.mouseDrag(event.getPos(), event.isLeftDown(), false, event.isRightDown());
 }
 
+void FaceNoiseApp::normalizeAudioValues()
+{
+	mMagNormalized.clear();
+
+	float cMean = (mHighThresh - mLowThresh)*0.5f;
+	auto mMagBounds = std::minmax_element(mMagSpectrum.begin(), mMagSpectrum.end());
+
+	for (auto mit = mMagSpectrum.begin(); mit != mMagSpectrum.end(); ++mit)
+	{
+		float cVal = *mit;
+		float nVal = lmap<float>(cVal, *mMagBounds.first, *mMagBounds.second, 0.0f, 1.0f);
+
+		if (nVal < mLowThresh)
+			nVal += cMean;
+		else if (nVal > mHighThresh)
+			nVal -= cMean;
+
+		mMagNormalized.push_back(nVal);
+	}
+}
+
 void FaceNoiseApp::update()
 {
 	mCinderDS->update();
 	mTexRgb->update(mCinderDS->getRgbFrame());
 	const uint16_t* cDepth = mCinderDS->getDepthFrame().getData();
 	mPoints.clear();
+	
 	mMagSpectrum = mMonitorSpectralNode->getMagSpectrum();
+	normalizeAudioValues();
+
 	int id = 0;
 	for (int dy = 0; dy < S_DIMS.y; ++dy)
 	{
@@ -169,15 +213,18 @@ void FaceNoiseApp::update()
 			float cVal = (float)cDepth[id];
 			if (cVal>100 && cVal < 1000 && dy % 2 == 0)
 			{
-				int aid = (int)lmap<float>(dy, 0, S_DIMS.y, 1023, 0);
-				float cAudio = mMagSpectrum[aid]*500.0f;
+
+				int aid = (int)lmap<float>(dy, 0, S_DIMS.y, 0, 1023);
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
 
+				float cAudioScale = lmap<float>(cy, -1.0f, 1.0f, mAudioScaleTop, mAudioScaleBottom);
+				float cAudio = mMagNormalized[aid] * cAudioScale;
+
 				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
 				cUV.y = 1.0 - cUV.y;
-				mPoints.push_back(FacePoint(vec3(cx, cy, cz+cAudio), cUV));
+				mPoints.push_back(FacePoint(vec3(cx*cAudio, cy, cz), cUV));
 			}
 			id++;
 		}
@@ -196,6 +243,9 @@ void FaceNoiseApp::draw()
 	gl::pointSize(3.0f);
 	gl::ScopedTextureBind cRgb(mTexRgb);
 	mDrawObj->draw();
+
+	gl::setMatricesWindow(getWindowSize());
+	mGUI->draw();
 }
 
 void FaceNoiseApp::exit()
@@ -203,4 +253,4 @@ void FaceNoiseApp::exit()
 	mCinderDS->stop();
 }
 
-CINDER_APP_NATIVE( FaceNoiseApp, RendererGl )
+CINDER_APP( FaceNoiseApp, RendererGl )

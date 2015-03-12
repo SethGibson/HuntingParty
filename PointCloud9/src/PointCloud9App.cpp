@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <memory>
 #include "cinder/app/AppNative.h"
 #include "cinder/Arcball.h"
@@ -13,6 +14,7 @@
 #include "cinder/MayaCamUI.h"
 #include "cinder/Rand.h"
 #include "cinder/Thread.h"
+#include "cinder/params/Params.h"
 #include "ciTri.h"
 #include "DSAPI.h"
 #include "DSAPIUtil.h"
@@ -82,6 +84,7 @@ private:
 	bool setupDSAPI();
 	void setupCamera();
 	void setupAudio();
+	void setupGUI();
 	
 	int roundTo(int pNum, int pMult);
 	void getTriangles();
@@ -113,7 +116,10 @@ private:
 	audio::InputDeviceNodeRef mInputDeviceNode;
 	audio::MonitorSpectralNodeRef mMonitorSpectralNode;
 	vector<float> mMagSpectrum;
-	float mMagMean, mMagMin,mMagMax;
+	vector<float> mMagNormal;
+	
+	params::InterfaceGlRef	mGUI;
+	float mMagMean, mMagMin,mMagMax, mAudioScaleMin, mAudioScaleMax, mTimeScale;
 
 };
 
@@ -125,6 +131,7 @@ void PointCloud9App::prepareSettings(Settings *pSettings)
 
 void PointCloud9App::setup()
 {
+	setupGUI();
 	setupCamera();
 	setupDSAPI();
 	setupAudio();
@@ -170,6 +177,20 @@ void PointCloud9App::setup()
 	mThread = shared_ptr<thread>(new thread( bind(&PointCloud9App::getSampleSet, this) ) );
 	
 }
+void PointCloud9App::setupGUI()
+{
+	mMagMin = 0.4f;
+	mMagMax = 0.6f;
+	mAudioScaleMin = 1.0f;
+	mAudioScaleMax = 40.0f;
+	mTimeScale = 0.06f;
+	mGUI = params::InterfaceGl::create("Params", Vec2i(300, 300));
+	mGUI->addParam("Audio Min", &mMagMin);
+	mGUI->addParam("Audio Max", &mMagMax);
+	mGUI->addParam("Audio Scale Min", &mAudioScaleMin);
+	mGUI->addParam("Audio Scale Max", &mAudioScaleMax);
+	mGUI->addParam("Time Scale Max", &mTimeScale);
+}
 
 void PointCloud9App::getSampleSet()
 {
@@ -205,7 +226,7 @@ void PointCloud9App::setupAudio()
 	auto cAudioCtx = audio::Context::master();
 	mInputDeviceNode = cAudioCtx->createInputDeviceNode();
 
-	auto cMonitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(1024);
+	auto cMonitorFormat = audio::MonitorSpectralNode::Format().fftSize(512).windowSize(256);
 	mMonitorSpectralNode = cAudioCtx->makeNode(new audio::MonitorSpectralNode(cMonitorFormat));
 
 	mInputDeviceNode >> mMonitorSpectralNode;
@@ -328,31 +349,22 @@ void PointCloud9App::mouseDrag(MouseEvent pEvent)
 void PointCloud9App::updateAudio()
 {
 	mMagSpectrum = mMonitorSpectralNode->getMagSpectrum();
-	auto cFFTBounds = std::minmax(mMagSpectrum.begin(), mMagSpectrum.end());
+	mMagNormal.clear();
+	auto cFFTBounds = std::minmax_element(mMagSpectrum.begin(), mMagSpectrum.end());
 
-	float cSum = 0.0f;
-	float cMax = -1.0f;
-	float cMin = 10000.0f;
-	mMagMean = 0.0f;
-	for (auto cV : mMagSpectrum)
+	for (auto mit = mMagSpectrum.begin(); mit != mMagSpectrum.end(); ++mit)
 	{
-		if (cV > cMax)
-			cMax = cV;
-		else if (cV < cMin)
-			cMin = cV;
-		cSum += cV;
+		float cVal = *mit;
+		float nVal = lmap<float>(cVal, *cFFTBounds.first, *cFFTBounds.second, 0.0f, 1.0f);
+
+		mMagMean = (mMagMax - mMagMin)*0.5f;
+		if (nVal < mMagMin)
+			nVal += mMagMean;
+		else if (nVal > mMagMax)
+			nVal -= mMagMean;
+
+		mMagNormal.push_back(nVal);
 	}
-
-	if (mMagSpectrum.size() > 0)
-	{
-		cSum /= (float)mMagSpectrum.size();
-		mMagMean = math<float>::clamp(cSum * 10000, 0, 1);
-	}
-
-	mMagMin = cMin;
-	mMagMax = cMax;
-
-	std::reverse(mMagSpectrum.begin(), mMagSpectrum.end());
 }
 
 void PointCloud9App::update()
@@ -407,10 +419,13 @@ void PointCloud9App::update()
 
 			if (dx%S_P9_STEP.x == 0 && dy%S_P9_STEP.y==0)
 			{
-				int cMagId = (int)lmap<float>((float)cCubeId, 0, mCubes.size(), 0.f, mMagSpectrum.size()-1);
-				float cFFTVal = mMagSpectrum[cMagId];
-				cFFTVal = lmap<float>(cFFTVal, mMagMin, mMagMax, 5, 60);
+				int cMagId = (int)lmap<float>((float)dx, 0, S_DEPTH_SIZE.x, 0.f, mMagSpectrum.size()-1);
+				float cFFTVal = mMagNormal[cMagId];
+				float cScale = math<float>::abs(math<float>::sin(dy+getElapsedFrames()*mTimeScale));
+				if (dx % (S_P9_STEP.x*2)==0)
+					cScale = math<float>::abs(math<float>::cos(dy + getElapsedFrames()*mTimeScale));
 
+				cScale = lmap<float>(cScale, 0, 1, 1, 2);
 				float cZCubeImg[3]{mCubes.at(cCubeId).IPosition.x, mCubes.at(cCubeId).IPosition.y, cDepth-S_CUBE_OFFSET};
 				float cZCubeCam[3]{0};
 				DSTransformFromZImageToZCamera(mZIntrins, cZCubeImg, cZCubeCam);
@@ -418,7 +433,7 @@ void PointCloud9App::update()
 				mCubes.at(cCubeId).WPosition.y = cZCubeCam[1];
 				mCubes.at(cCubeId).WPosition.z = cZCubeCam[2];
 				mCubes.at(cCubeId).Active = (cDepth > 0 && cDepth < 2000);
-				mCubes.at(cCubeId).Size = cFFTVal;
+				mCubes.at(cCubeId).Size = lmap<float>(cFFTVal, 0.0f, 1.0f, mAudioScaleMin, mAudioScaleMax)*cScale;
 
 				if (cCubeId == mRedId)
 					mCubes.at(cCubeId).PColor = Color(1, 0, 0);
@@ -478,11 +493,9 @@ void PointCloud9App::draw()
 		}
 	}
 	gl::disableAlphaBlending();
-	/*
+
 	gl::setMatricesWindow(getWindowSize());
-	if (mRgbTexture)
-		gl::draw(mRgbTexture, Rectf(0, 0, 320, 240));
-		*/
+	mGUI->draw();
 }
 
 void PointCloud9App::shutdown()

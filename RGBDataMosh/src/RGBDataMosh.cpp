@@ -4,7 +4,7 @@
 #pragma comment(lib, "DSAPI32.lib")
 #endif
 
-#include "cinder/app/AppNative.h"
+#include "cinder/app/App.h"
 #include "cinder/app/RendererGl.h"
 #include "cinder/gl/Shader.h"
 #include "cinder/gl/Texture.h"
@@ -164,10 +164,10 @@ public:
 	}
 };
 
-class HP_WaitingRTApp : public AppNative {
+class HP_WaitingRTApp : public App {
 public:
 	void setup();
-	void shutdown() override;
+	void cleanup() override;
 	void resize();
 	void update();
 	void draw();
@@ -264,6 +264,7 @@ public:
 
 void HP_WaitingRTApp::setup()
 {
+	getWindow()->setSize(1280, 720);
 	mDepthSubsampleSize = DEPTH_SUBSAMPLE_WINDOW_SIZE;
 
 	//out = std::ofstream("output.txt");
@@ -272,7 +273,7 @@ void HP_WaitingRTApp::setup()
 	mDSAPI = CinderDSAPI::create();
 	mDSAPI->init();
 	mDSAPI->initDepth(CinderDS::FrameSize::DEPTHSD, 60);
-	mDSAPI->initRgb(CinderDS::FrameSize::RGBVGA, 30);
+	mDSAPI->initRgb(CinderDS::FrameSize::RGBVGA, 60);
 	//mDSAPI->initForAlignment();
 	mDSAPI->start();
 
@@ -286,10 +287,9 @@ void HP_WaitingRTApp::setup()
 	mDSAPI->getDSThird()->getCalibIntrinsicsRectThird(thirdIntrin);
 	mDSAPI->getDSThird()->getCalibExtrinsicsZToRectThird(zToThirdTrans);
 
-
 	mCam.setPerspective(cFOVs.y, getWindowAspectRatio(), 100, 2500);
 	mCam.lookAt(vec3(0, 0, 0), vec3(0, 0, 1000), vec3(0, -1, 0));
-
+	mCam.setCenterOfInterestPoint(vec3(0, 0, 750));
 	mMayaCam = MayaCamUI(mCam);
 
 	mTexture = gl::Texture::create(loadImage(loadAsset("blank_texture.png")), gl::Texture::Format().mipmap());
@@ -442,7 +442,7 @@ void HP_WaitingRTApp::setup()
 	previousElapsedTime = getElapsedSeconds();
 }
 
-void HP_WaitingRTApp::shutdown()
+void HP_WaitingRTApp::cleanup()
 {
 	mDSAPI->stop();
 	//out.close();
@@ -639,6 +639,7 @@ void HP_WaitingRTApp::draw()
 	}
 
 	/* FLOW LINES */
+	/*
 	if (currentFlow.data)
 	{
 		gl::begin(GL_LINES);
@@ -658,7 +659,7 @@ void HP_WaitingRTApp::draw()
 			}
 		}
 		gl::end();
-	}
+	}*/
 
 }
 
@@ -1295,4 +1296,4 @@ auto options = RendererGl::Options().version(3, 3); // instancing functions are 
 #else
 auto options = RendererGl::Options(); // implemented as extensions in Mac OS 10.7+
 #endif
-CINDER_APP_NATIVE(HP_WaitingRTApp, RendererGl(options))
+CINDER_APP(HP_WaitingRTApp, RendererGl(options))
