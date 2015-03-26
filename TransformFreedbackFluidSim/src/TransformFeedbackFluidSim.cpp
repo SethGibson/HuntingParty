@@ -23,7 +23,11 @@ using namespace std;
 // Shading Language Cookbook. For more in-depth discussion of what is going on
 // here please refer to that reference.
 
-const int nParticles			= 4000;
+const float MouseScaleFactor = 1.62; //if you change the camera position at setup, you need to scale this up/down depending on how much of the viewport the particles are taking up.
+const float PositionScaleFactor	= 0.1;
+const int width					= 480;
+const int height				= 360;
+const int nParticles			= 480 * 360;
 const int PositionIndex			= 0;
 const int VelocityIndex			= 1;
 const int StartTimeIndex		= 2;
@@ -37,7 +41,10 @@ float mix( float x, float y, float a )
 class FluidSim : public App {
   public:
 	void setup();
-	void mouseDown( MouseEvent event );
+	void mouseDrag(MouseEvent event);
+	void mouseUp(MouseEvent event);
+	void keyDown(KeyEvent event);
+	void keyUp(KeyEvent event);
 	void update();
 	void draw();
 	
@@ -57,6 +64,10 @@ class FluidSim : public App {
 	CameraPersp						mCam;
 	TriMeshRef						mTrimesh;
 	uint32_t						mDrawBuff;
+
+	bool							rotateCam = false;
+	vec2							currentMousePosition;
+	bool							mouseIsDown;
 };
 
 void FluidSim::setup()
@@ -64,7 +75,7 @@ void FluidSim::setup()
 	mDrawBuff = 1;
 	
 	mCam.setPerspective( 60.0f, getWindowAspectRatio(), .01f, 1000.0f );
-	mCam.lookAt( vec3( 0, 0, 10 ), vec3( 0, 0, 0 ) );
+	mCam.lookAt( vec3( 0, 0, 50 ), vec3( 0, 0, 0 ) );
 	
 	loadTexture();
 	loadShaders();
@@ -115,7 +126,11 @@ void FluidSim::loadShaders()
 	
 	mPUpdateGlsl->uniform( "H", 1.0f / 60.0f );
 	mPUpdateGlsl->uniform( "Accel", vec3( 0.0f ) );
-	mPUpdateGlsl->uniform( "ParticleLifetime", 3.0f );
+	mPUpdateGlsl->uniform("ParticleLifetime", 3.0f);
+	mPUpdateGlsl->uniform("MouseIsDown", mouseIsDown);
+	mPUpdateGlsl->uniform("MousePosition", currentMousePosition);
+	mPUpdateGlsl->uniform("MinPosition", vec2((float)(-width / 2) * PositionScaleFactor, (float)(-height / 2) * PositionScaleFactor));
+	mPUpdateGlsl->uniform("MaxPosition", vec2((float)(width / 2) * PositionScaleFactor, (float)(height / 2) * PositionScaleFactor));
 	
 	try {
 		ci::gl::GlslProg::Format mRenderParticleGlslFormat;
@@ -137,12 +152,20 @@ void FluidSim::loadShaders()
 	mPRenderGlsl->uniform( "MinParticleSize", 1.0f );
 	mPRenderGlsl->uniform( "MaxParticleSize", 64.0f );
 	mPRenderGlsl->uniform( "ParticleLifetime", 3.0f );
+	
 }
 
 void FluidSim::loadBuffers()
 {
 	// Initialize positions
 	std::vector<vec3> positions( nParticles, vec3( 0.0f ) );
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			positions[x + (y * width)] = vec3(((float)x - (width / 2)) * PositionScaleFactor, ((float)y - (height / 2)) * PositionScaleFactor, 0);
+		}
+	}
 	
 	// Create Position Vbo with the initial position data
 	mPPositions[0] = ci::gl::Vbo::create( GL_ARRAY_BUFFER, positions.size() * sizeof(vec3), positions.data(), GL_STATIC_DRAW );
@@ -154,7 +177,10 @@ void FluidSim::loadBuffers()
 	
 	for( auto normalIt = normals.begin(); normalIt != normals.end(); ++normalIt ) {
 		// Creating a random velocity for each particle in a unit sphere
-		*normalIt = ci::randVec3f() * mix( 0.0f, 1.5f, mRand.nextFloat() );
+		//vec3 vel = ci::randVec3f() * mix(0.0f, 1.5f, mRand.nextFloat());
+		//vel.z = 0;
+		vec3 vel = vec3(0, 0, 0);
+		*normalIt = vel;
 	}
 	
 	// Create the Velocity Buffer using the newly buffered velocities
@@ -169,8 +195,9 @@ void FluidSim::loadBuffers()
 	float time = 0.0f;
 	float rate = 0.001f;
 	for( int i = 0; i < nParticles; i++ ) {
-		timeData[i] = time;
-		time += rate;
+		//timeData[i] = time;
+		//time += rate;
+		timeData[i] = rate;
 	}
 
 	// Create the StartTime Buffer, so that we can reset the particle after it's dead
@@ -215,8 +242,33 @@ void FluidSim::loadBuffers()
 	}
 }
 
-void FluidSim::mouseDown(MouseEvent event)
+void FluidSim::mouseDrag(MouseEvent event)
 {
+	//mPVelocities[1 - mDrawBuff]
+	mouseIsDown = true;
+
+	// Some mouse math to put the position somewhere in the flag
+	currentMousePosition.x = lmap((float)event.getPos().x, (float)0, (float)getWindowWidth(), (float)-(width / 2) * MouseScaleFactor * PositionScaleFactor, (float)(width / 2) * MouseScaleFactor * PositionScaleFactor);
+	currentMousePosition.y = lmap((float)event.getPos().y, (float)0, (float)getWindowHeight(), (float)(height / 2) * MouseScaleFactor * PositionScaleFactor, (float)-(height / 2) * MouseScaleFactor * PositionScaleFactor);
+}
+
+void FluidSim::mouseUp(MouseEvent event)
+{
+	mouseIsDown = false;
+}
+
+void FluidSim::keyDown(KeyEvent event)
+{
+	if (event.getChar() == 'r'){
+		rotateCam = true;
+	}
+}
+
+void FluidSim::keyUp(KeyEvent event)
+{
+	if (event.getChar() == 'r'){
+		rotateCam = false;
+	}
 }
 
 void FluidSim::update()
@@ -233,7 +285,9 @@ void FluidSim::update()
 	// move to the rasterization stage.
 	gl::ScopedState		stateScope( GL_RASTERIZER_DISCARD, true );
 	
-	mPUpdateGlsl->uniform( "Time", getElapsedFrames() / 60.0f );
+	mPUpdateGlsl->uniform("Time", getElapsedFrames() / 60.0f);
+	mPUpdateGlsl->uniform("MouseIsDown", mouseIsDown);
+	mPUpdateGlsl->uniform("MousePosition", currentMousePosition);
 	
 	// Opposite TransformFeedbackObj to catch the calculated values
 	// In the opposite buffer
@@ -261,7 +315,8 @@ void FluidSim::draw()
 	
 	gl::pushMatrices();
 	gl::setMatrices( mCam );
-	gl::multModelMatrix( rotate( rotateRadians, vec3( 0, 1, 0 ) ) );
+	if (rotateCam)
+		gl::multModelMatrix( rotate( rotateRadians, vec3( 0, 1, 0 ) ) );
 	
 	mPRenderGlsl->uniform( "Time", getElapsedFrames() / 60.0f );
 	gl::setDefaultShaderVars();

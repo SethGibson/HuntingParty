@@ -25,4 +25,6 @@ void main() {
 		Transp = 1.0 - agePct;
 		gl_PointSize = mix( MinParticleSize, MaxParticleSize, agePct );
 	}
+
+	gl_PointSize = 5;
 }

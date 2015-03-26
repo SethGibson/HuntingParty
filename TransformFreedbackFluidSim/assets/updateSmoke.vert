@@ -17,6 +17,11 @@ uniform float H;	// Elapsed time between frames
 uniform vec3 Accel; // Particle Acceleration
 uniform float ParticleLifetime; // Particle lifespan
 
+uniform bool MouseIsDown;
+uniform vec2 MousePosition;
+uniform vec2 MinPosition;
+uniform vec2 MaxPosition;
+
 void main() {
 	
 	// Update position & velocity for next frame
@@ -24,20 +29,22 @@ void main() {
 	Velocity = VertexVelocity;
 	StartTime = VertexStartTime;
 	
-	if( Time >= StartTime ) {
-		
-		float age = Time - StartTime;
-		
-		if( age > ParticleLifetime ) {
-			// The particle is past it's lifetime, recycle.
-			Position = vec3(0.0);
-			Velocity = VertexInitialVelocity;
-			StartTime = Time;
-		}
-		else {
-			// The particle is alive, update.
-			Position += Velocity * H;
-			Velocity += Accel * H;
-		}
+	Position += Velocity * H;
+	Velocity += Accel * H;
+	if( MouseIsDown )
+	{
+		float maxMouseVelStrength = 3;
+
+		float dist = distance(MousePosition, vec2(Position.x, Position.y));
+		vec2 dir = vec2(Position.x, Position.y) - MousePosition;
+
+		vec2 v = normalize(dir) * 0.5 / dist;
+		Velocity += vec3(v.x, v.y, 0);
 	}
+
+	if (Position.x + Velocity.x < MinPosition.x || Position.x + Velocity.x > MaxPosition.x)
+		Velocity.x = -Velocity.x;
+
+	if (Position.y + Velocity.y < MinPosition.y || Position.y + Velocity.y > MaxPosition.y)
+		Velocity.y = -Velocity.y;
 }
