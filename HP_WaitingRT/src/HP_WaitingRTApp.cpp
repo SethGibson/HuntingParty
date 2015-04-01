@@ -1360,10 +1360,13 @@ std::vector<vec4> HP_WaitingRTApp::GetRGBSubsampledColors(std::vector<uint16_t> 
 
 			if (zImage[2] != 0) //depth is valid
 			{
-				uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
-				uint8_t g = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 1];
-				uint8_t b = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 2];
-				subsampledColors.push_back(vec4((float)r / (float)255, (float)g / (float)255, (float)b / (float)255, 1.0));
+				if (thirdImage[0]>0 && thirdImage[0] < mDSAPI->getRgbWidth() && thirdImage[1]>0 && thirdImage[0] < mDSAPI->getRgbHeight())
+				{
+					uint8_t r = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 0];
+					uint8_t g = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 1];
+					uint8_t b = mRgbBuffer.getData()[(((int)thirdImage[0] + ((int)thirdImage[1] * thirdIntrin.rw)) * 3) + 2];
+					subsampledColors.push_back(vec4((float)r / (float)255, (float)g / (float)255, (float)b / (float)255, 1.0));
+				}
 			}
 			else
 			{

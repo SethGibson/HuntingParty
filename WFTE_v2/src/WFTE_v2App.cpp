@@ -3,7 +3,7 @@
 #else
 #pragma comment(lib, "DSAPI.lib")
 #endif
-#include "cinder/app/AppNative.h"
+#include "cinder/app/App.h"
 #include "cinder/app/RendererGl.h"
 #include "cinder/gl/gl.h"
 #include "cinder/gl/Batch.h"
@@ -24,7 +24,7 @@ using namespace CinderDS;
 static ivec2 S_DIMS(480, 360);
 static ivec2 S_STEP(60, 40);
 
-class WFTE_v2App : public AppNative 
+class WFTE_v2App : public App
 {
 public:
 	void setup() override;
@@ -147,21 +147,21 @@ void WFTE_v2App::setup()
 
 void WFTE_v2App::setupGUI()
 {
-	mBloomMin = 0.4f;
-	mBloomMax = 1.2f;
-	mExposure = 0.9f;
-	mBloomFactor = 1.0f;
-	mSceneFactor = 1.0f;
+	mBloomMin = 0.3f;
+	mBloomMax = 1.f;
+	mExposure = 1.f;
+	mBloomFactor = 1.5f;
+	mSceneFactor = 0.5f;
 	mDepthMin = 100.0f;
 	mDepthMax = 1000.0f;
-	mDrawSize = 1.0f;
-	mBloomSize = 2.0f;
-	mMaskColor = Color(0.25f, 0.75f, 1.0f);
-	mBlurSizeX = 1.0f / 512.0f;
-	mBlurSizeY = 1.0f / 512.0f;
+	mDrawSize = 2.0f;
+	mBloomSize = 8.0f;
+	mMaskColor = ColorT<uint8_t>(216,255,64);
+	mBlurSizeX = 0.003f;
+	mBlurSizeY = 0.003f;
 	mColorAmt = 1.0f;
-	mFinalAmt = 1.0f;
-	mBlurAmt = 1.0f;
+	mFinalAmt = 0.0f;
+	mBlurAmt = 1.5f;
 
 	mGUI = params::InterfaceGl::create("Settings", vec2(250, 300));
 	mGUI->setPosition(vec2(20));
@@ -272,7 +272,7 @@ void WFTE_v2App::setupDS()
 	mCinderDS->initRgb(FrameSize::RGBVGA, 60);
 	mCinderDS->start();
 
-	getSignalShutdown().connect(std::bind(&WFTE_v2App::exit, this));
+	getSignalCleanup().connect(std::bind(&WFTE_v2App::exit, this));
 }
 
 void WFTE_v2App::setupMesh()
@@ -387,13 +387,15 @@ void WFTE_v2App::updatePointCloud()
 		for (int dx = 0; dx < S_DIMS.x; ++dx)
 		{
 			float cVal = (float)cDepth[id];
-			if (cVal>mDepthMin && cVal < mDepthMax && dy%2==0)
+			if (cVal>mDepthMin && cVal < mDepthMax)
 			{
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, mDepthMin, mDepthMax, -1, -5);
 
-				vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
+				//vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
+				vec2 cUV = mCinderDS->getColorSpaceCoordsFromZImage((float)dx, (float)dy, cVal);
+
 				cUV.y = 1.0 - cUV.y;
 				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(mMaskColor.r, mMaskColor.g, mMaskColor.b,1), cUV));
 				if (dx % S_STEP.x == 0 && dy % S_STEP.y == 0)
@@ -515,22 +517,23 @@ void WFTE_v2App::draw()
 	gl::color(Color::white());
 	gl::disableDepthRead();
 	gl::disableDepthWrite();
-	gl::enableAdditiveBlending();
-
+	
+	gl::enableAlphaBlending();
 	gl::setMatricesWindow(getWindowSize());
 	gl::draw(mTexBg, vec2(0));
-	//gl::draw(mColorTarget->getColorTexture(), vec2(0));
+	gl::draw(mColorTarget->getColorTexture(), vec2(0));
 
-	/*
+	
 	gl::setMatrices(mMayaCam.getCamera());
 	mTexRgb->bind();
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	gl::pointSize(mDrawSize);
 	mCloudDrawObj->draw();
-	mTexRgb->unbind();*/
+	mTexRgb->unbind();
+	gl::disableAlphaBlending();
 
-
-
+	gl::enableAdditiveBlending();
+	gl::setMatricesWindow(getWindowSize());
 	mColorTarget->bindTexture(0);
 	mFinalTarget->bindTexture(1);
 	mVBlurTarget->bindTexture(2);
@@ -555,4 +558,4 @@ void WFTE_v2App::exit()
 	mCinderDS->stop();
 }
 
-CINDER_APP_NATIVE( WFTE_v2App, RendererGl )
+CINDER_APP( WFTE_v2App, RendererGl )

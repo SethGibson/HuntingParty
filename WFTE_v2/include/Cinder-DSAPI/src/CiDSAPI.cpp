@@ -286,8 +286,14 @@ namespace CinderDS
 		DSTransformFromZCameraToRectThirdCamera(mZToRgb, cZCamera, cRgbCamera);
 		DSTransformFromThirdCameraToRectThirdImage(mRgbIntrinsics, cRgbCamera, cRgbImage);
 
-		float cu = static_cast<int>(cRgbImage[0]) / (float)mRgbWidth;
-		float cv = static_cast<int>(cRgbImage[1]) / (float)mRgbHeight;
+		float cu = 0.0f;
+		float cv = 0.0f;
+
+		if (cRgbImage[0] >= 0 && cRgbImage[0] < mRgbWidth&&cRgbImage[1] >= 0 && cRgbImage[1] < mRgbHeight)
+		{
+			cu = static_cast<int>(cRgbImage[0]) / (float)mRgbWidth;
+			cv = static_cast<int>(cRgbImage[1]) / (float)mRgbHeight;
+		}
 
 		return vec2(cu, cv);
 	}

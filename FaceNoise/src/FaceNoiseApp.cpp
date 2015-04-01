@@ -68,6 +68,7 @@ private:
 	vector<float>					mMagSpectrum;
 	vector<float>					mMagNormalized;
 	
+	int								mAudioStart, mAudioDir;
 	float							mAudioScaleTop, mAudioScaleBottom, mLowThresh, mHighThresh;
 	params::InterfaceGlRef			mGUI;
 };
@@ -90,10 +91,9 @@ void FaceNoiseApp::setup()
 
 	gl::enableDepthRead();
 	gl::enableDepthWrite();
-	gl::enableAdditiveBlending();
 
 	mAudioScaleTop = 5.0f;
-	mAudioScaleBottom = 1.0f;
+	mAudioScaleBottom = 3.0f;
 	mLowThresh = 0.25f;
 	mHighThresh = 0.75f;
 
@@ -102,6 +102,8 @@ void FaceNoiseApp::setup()
 	mGUI->addParam("Audio Scale Btm", &mAudioScaleBottom);
 	mGUI->addParam("Low Thresh (0-1)", &mLowThresh);
 	mGUI->addParam("High Thresh (0-1)", &mHighThresh);
+	mAudioStart = 0;
+	mAudioDir = 1;
 }
 
 void FaceNoiseApp::setupDS()
@@ -155,7 +157,7 @@ void FaceNoiseApp::setupAudio()
 	auto ctx = audio::Context::master();
 	mInputDeviceNode = ctx->createInputDeviceNode();
 
-	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(2048).windowSize(1024);
+	auto monitorFormat = audio::MonitorSpectralNode::Format().fftSize(256).windowSize(128);
 	mMonitorSpectralNode = ctx->makeNode(new audio::MonitorSpectralNode(monitorFormat));
 	
 	mInputDeviceNode >> mMonitorSpectralNode;
@@ -181,9 +183,14 @@ void FaceNoiseApp::normalizeAudioValues()
 	float cMean = (mHighThresh - mLowThresh)*0.5f;
 	auto mMagBounds = std::minmax_element(mMagSpectrum.begin(), mMagSpectrum.end());
 
-	for (auto mit = mMagSpectrum.begin(); mit != mMagSpectrum.end(); ++mit)
+	int cMaxAudioId = mMagSpectrum.size();
+
+	for (int aid = 0; aid < cMaxAudioId; ++aid)
+	//for (auto mit = mMagSpectrum.begin(); mit != mMagSpectrum.end(); ++mit)
 	{
-		float cVal = *mit;
+		int cLookupID = (aid + mAudioStart) % cMaxAudioId;
+		//int cLookupID = aid;
+		float cVal = mMagSpectrum[cLookupID];
 		float nVal = lmap<float>(cVal, *mMagBounds.first, *mMagBounds.second, 0.0f, 1.0f);
 
 		if (nVal < mLowThresh)
@@ -193,6 +200,10 @@ void FaceNoiseApp::normalizeAudioValues()
 
 		mMagNormalized.push_back(nVal);
 	}
+
+	if (getElapsedFrames()%2==0)
+		mAudioStart = (mAudioStart + 1) % cMaxAudioId;
+
 }
 
 void FaceNoiseApp::update()
@@ -211,10 +222,10 @@ void FaceNoiseApp::update()
 		for (int dx = 0; dx < S_DIMS.x; ++dx)
 		{
 			float cVal = (float)cDepth[id];
-			if (cVal>100 && cVal < 1000 && dy % 2 == 0)
+			if (cVal>100 && cVal < 1000 && dy%2==0)
 			{
 
-				int aid = (int)lmap<float>(dy, 0, S_DIMS.y, 0, 1023);
+				int aid = (int)lmap<float>(dy, 0, S_DIMS.y, 0, mMagSpectrum.size()-1);
 				float cx = lmap<float>(dx, 0, S_DIMS.x, -1.3333f, 1.3333f);
 				float cy = lmap<float>(dy, 0, S_DIMS.y, -1.0f, 1.0f);
 				float cz = lmap<float>(cVal, 100, 1000, -1, -5);
@@ -230,6 +241,7 @@ void FaceNoiseApp::update()
 		}
 	}
 
+	//normals
 	mDataObj->bufferData(mPoints.size()*sizeof(FacePoint), mPoints.data(), GL_DYNAMIC_DRAW);
 	mMeshObj = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mAttribObj, mDataObj } });
 	mDrawObj->replaceVboMesh(mMeshObj);
@@ -237,12 +249,18 @@ void FaceNoiseApp::update()
 
 void FaceNoiseApp::draw()
 {
-	gl::clear( Color( 0.1f, 0.15f, 0.25f ) ); 
+	gl::clear( Color( 0.25f, 0.15f, 0.1f ) ); 
+	gl::color(Color::white());
 	gl::setMatrices(mMayaCam.getCamera());
 	//gl::enableAdditiveBlending();
 	gl::pointSize(3.0f);
 	gl::ScopedTextureBind cRgb(mTexRgb);
 	mDrawObj->draw();
+
+	gl::enableAdditiveBlending();
+	gl::pointSize(5.0f);
+	mDrawObj->draw();
+	gl::disableAlphaBlending();
 
 	gl::setMatricesWindow(getWindowSize());
 	mGUI->draw();
