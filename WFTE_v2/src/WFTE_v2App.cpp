@@ -11,7 +11,7 @@
 #include "cinder/gl/GlslProg.h"
 #include "cinder/gl/Fbo.h"
 #include "cinder/Camera.h"
-#include "cinder/MayaCamUI.h"
+#include "cinder/CameraUi.h"
 #include "cinder/params/Params.h"
 #include "cinder/TriMesh.h"
 #include "CiDSAPI.h"
@@ -28,8 +28,6 @@ class WFTE_v2App : public App
 {
 public:
 	void setup() override;
-	void mouseDown( MouseEvent event ) override;
-	void mouseDrag(MouseEvent event) override;
 	void update() override;
 	void draw() override;
 
@@ -98,7 +96,7 @@ private:
 
 	CinderDSRef			mCinderDS;
 	CameraPersp			mCamera;
-	MayaCamUI			mMayaCam;
+	CameraUi			mCamUi;
 
 	// UI Data
 	params::InterfaceGlRef mGUI;
@@ -135,8 +133,8 @@ void WFTE_v2App::setup()
 
 	mCamera.setPerspective(45.0f, getWindowAspectRatio(), 0.1f, 100.0f);
 	mCamera.lookAt(vec3(0), vec3(0,0,-1), vec3(0, -1, 0));
-	mCamera.setCenterOfInterestPoint(vec3(0,0,-3));
-	mMayaCam.setCurrentCam(mCamera);
+	mCamera.setPivotDistance(3);
+	mCamUi = CameraUi(&mCamera, getWindow());
 
 	mTexRgb = gl::Texture::create(640, 480);
 
@@ -352,16 +350,6 @@ void WFTE_v2App::setupFBOs()
 
 }
 
-void WFTE_v2App::mouseDown( MouseEvent event )
-{
-	mMayaCam.mouseDown(event.getPos());
-}
-
-void WFTE_v2App::mouseDrag(MouseEvent event)
-{
-	mMayaCam.mouseDrag(event.getPos(), event.isLeftDown(), false, event.isRightDown());
-}
-
 void WFTE_v2App::update()
 {
 	mCinderDS->update();
@@ -394,7 +382,7 @@ void WFTE_v2App::updatePointCloud()
 				float cz = lmap<float>(cVal, mDepthMin, mDepthMax, -1, -5);
 
 				//vec2 cUV = mCinderDS->mapColorToDepth((float)dx, (float)dy, cVal);
-				vec2 cUV = mCinderDS->getColorSpaceCoordsFromZImage((float)dx, (float)dy, cVal);
+				vec2 cUV = mCinderDS->getColorCoordsFromDepthImage((float)dx, (float)dy, cVal);
 
 				cUV.y = 1.0 - cUV.y;
 				mPoints.push_back(CloudPoint(vec3(cx, cy, cz), vec4(mMaskColor.r, mMaskColor.g, mMaskColor.b,1), cUV));
@@ -409,17 +397,17 @@ void WFTE_v2App::updatePointCloud()
 	}
 
 	mVertexData->bufferData(mPoints.size()*sizeof(CloudPoint), mPoints.data(), GL_DYNAMIC_DRAW);
-	mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
-	mCloudDrawObj->replaceVboMesh(mPointCloud);
+	//mPointCloud = gl::VboMesh::create(mPoints.size(), GL_POINTS, { { mVertexAttribs, mVertexData } });
+	//mCloudDrawObj->replaceVboMesh(mPointCloud);
 
 	mInstanceData->bufferData(mMeshPoints.size()*sizeof(vec3), mMeshPoints.data(), GL_DYNAMIC_DRAW);
-	mMeshVbo = gl::VboMesh::create(mMeshCube);
-	mMeshVbo->appendVbo(mInstanceAttribs, mInstanceData);
-	mMeshDrawObj->replaceVboMesh(mMeshVbo);
+	//mMeshVbo = gl::VboMesh::create(mMeshCube);
+	//mMeshVbo->appendVbo(mInstanceAttribs, mInstanceData);
+	//mMeshDrawObj->replaceVboMesh(mMeshVbo);
 
 	mMeshVertexData->bufferData(mVertexPoints.size()*sizeof(vec3), mVertexPoints.data(), GL_DYNAMIC_DRAW);
-	mMeshVertex = gl::VboMesh::create(mVertexPoints.size(), GL_TRIANGLE_STRIP, { { mMeshVertexAttribs, mMeshVertexData } });
-	mMeshVertexDraw->replaceVboMesh(mMeshVertex);
+	//mMeshVertex = gl::VboMesh::create(mVertexPoints.size(), GL_TRIANGLE_STRIP, { { mMeshVertexAttribs, mMeshVertexData } });
+	//mMeshVertexDraw->replaceVboMesh(mMeshVertex);
 }
 
 void WFTE_v2App::renderScene()
@@ -429,7 +417,7 @@ void WFTE_v2App::renderScene()
 	mColorTarget->bindFramebuffer();
 	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mColorTarget->getSize());
-	gl::setMatrices(mMayaCam.getCamera());
+	gl::setMatrices(mCamera);
 	mTexRgb->bind();
 	gl::pointSize(mDrawSize);
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
@@ -442,7 +430,7 @@ void WFTE_v2App::renderScene()
 	mLumTarget->bindFramebuffer();
 	gl::clear(ColorA::zero());
 	gl::viewport(ivec2(0), mLumTarget->getSize());
-	gl::setMatrices(mMayaCam.getCamera());
+	gl::setMatrices(mCamera);
 	mTexRgb->bind();
 	gl::pointSize(mBloomSize);
 	mShaderRender->uniform("mBloomMin", mBloomMin);
@@ -524,7 +512,7 @@ void WFTE_v2App::draw()
 	gl::draw(mColorTarget->getColorTexture(), vec2(0));
 
 	
-	gl::setMatrices(mMayaCam.getCamera());
+	gl::setMatrices(mCamera);
 	mTexRgb->bind();
 	mCloudDrawObj->replaceGlslProg(mShaderColor);
 	gl::pointSize(mDrawSize);
